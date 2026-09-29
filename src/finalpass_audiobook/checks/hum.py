@@ -8,9 +8,14 @@ least MIN_PERSIST_S. A word held for a few hundred milliseconds cannot pass, and
 neither can a voice harmonic gliding with intonation. The level at the start and
 end shows a slow build-up.
 
-Any steady hum is listed, at severity 3, whatever its level (operator: a bad hum
-is a bad hum); there is no level floor. Only the 40 Hz lower limit stays: very
-low lines at these levels are inaudible.
+Any steady hum is listed, whatever its level; there is no level floor. Only the
+40 Hz lower limit stays: very low lines at these levels are inaudible.
+
+Severity (operator, after auditioning every edge of one title's 12 hums): most
+hums are low-level and hardly noticeable, 1; a strong hum (its loudest line at
+least -55 dBFS) is 2; strong and starting or cutting off abruptly, 3. The two
+hums the operator called strong measured -53.8 and -54.3 dBFS; the loudest of
+the rest -55.5.
 
 A tracked line must also be heard in the pauses. On one title's 12 chapters,
 tracking alone found 8 lines; the operator auditioned all 8 and only one was hum
@@ -52,7 +57,8 @@ there. Instead the tone's own level is followed in 0.1 s steps through a narrow
 band (±3 Hz); a change of 20 dB or more within 0.5 s at either end, from or to
 the hum's full level (within 6 dB of its median), is reported ("cuts off
 abruptly", "starts abruptly"). A fade does not qualify: its last 20 dB happen
-well below full level.
+well below full level. Heard blind on one title's 24 hum edges: 6 of the 8
+claimed abrupt were, 2 of the other 16 were abrupt too (7 could not be judged).
 """
 from __future__ import annotations
 
@@ -66,7 +72,6 @@ from scipy.signal import butter, sosfiltfilt
 from ..chapter import Chapter
 from ..findings import Finding
 
-HUM_SEVERITY = 3
 
 
 @dataclass(frozen=True)
@@ -86,6 +91,7 @@ class HumTunables:
     harmonic_prominence_db: float = 6.0
     harmonic_tolerance_hz: float = 0.02   # per multiple: how far n * f0 may drift from the measured f0
     sidelobe_db: float = 25.0          # a line this far under a louder one within ±10 Hz is its leakage
+    strong_dbfs: float = -55.0         # a hum this loud (loudest line) is at least severity 2
     edge_band_hz: float = 3.0
     edge_block_s: float = 0.1
     edge_within_s: float = 0.5
@@ -518,12 +524,13 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
     if heard_in_pauses_only:
         text += ", heard in the pauses (speech covers it)"
     loudest = max(lv for _, lv in heads)
+    severity = hum_severity(loudest, cut_start or cut_end, t)
     parts = [text, shape if shape and len(heads) == 1 else f"around {loudest:.0f} dBFS"]
     parts += [w for w, on in (("starts abruptly", cut_start), ("cuts off abruptly", cut_end)) if on]
     s, e = int(start_s * ch.sr), int(end_s * ch.sr)
     return Finding(
         file=ch.name, check="hum", start_sample=s, end_sample=e, start_time=ch.clock(s), end_time=ch.clock(e),
-        severity=HUM_SEVERITY, problem=", ".join(parts),
+        severity=severity, problem=", ".join(parts),
         measures={**measures, "duration_s": round(end_s - start_s, 1),
                   "harmonics_hz": ",".join(str(h) for h in d["harmonics"]),
                   "pause_lines_hz": ",".join(f"{f:.1f}" for f, _ in d["lines"]),
@@ -531,6 +538,13 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
                   "pauses_measured": d["pauses"], "start_rise_db": round(rise, 1), "end_drop_db": round(drop, 1),
                   "starts_abruptly": "yes" if cut_start else "no", "cuts_off_abruptly": "yes" if cut_end else "no"},
     )
+
+
+def hum_severity(loudest_dbfs: float, abrupt: bool, t: HumTunables = HumTunables()) -> int:
+    """1 for a low-level hum; 2 when strong; 3 when strong and it starts or cuts off abruptly."""
+    if loudest_dbfs < t.strong_dbfs:
+        return 1
+    return 3 if abrupt else 2
 
 
 def _hidden_hums(y: np.ndarray, fs: float, t: HumTunables, pauses: list[tuple[float, float]],
@@ -552,8 +566,12 @@ def _hidden_hums(y: np.ndarray, fs: float, t: HumTunables, pauses: list[tuple[fl
             a_s, b_s = pauses[run[0]][0], pauses[run[-1]][1]
             if len(run) < t.pause_hum_min_pauses or b_s - a_s < t.pause_hum_min_span_s:
                 continue
-            if any(_within(a_s, b_s, ks, ke, t.window_s)
-                   and any(abs(f - g) <= t.pause_line_tol_hz or _is_multiple(f, g) for g in lines)
+            same = lambda g: abs(f - g) <= t.pause_line_tol_hz or _is_multiple(f, g)  # noqa: E731
+            # A known hum's own tone (or a multiple) overlapping it in time is that hum: a pause run
+            # covers whole pauses, so it can run past the hum's end. Its other listed lines only
+            # when the run lies within the hum.
+            if any((_overlaps(a_s, b_s, ks, ke, t.window_s) and same(lines[0]))
+                   or (_within(a_s, b_s, ks, ke, t.window_s) and any(same(g) for g in lines))
                    for ks, ke, lines in known):
                 continue
             near = [lv for i in run for g, lv in per_pause[i] if abs(g - f) <= 2 * t.pause_hum_tol_hz]
@@ -589,6 +607,11 @@ def _refine_span(y: np.ndarray, fs: float, t: HumTunables, f0: float, start_s: f
 
 def _within(start_s: float, end_s: float, ks: float, ke: float, slack: float) -> bool:
     return ks - slack <= start_s and end_s <= ke + slack
+
+
+def _overlaps(start_s: float, end_s: float, ks: float, ke: float, slack: float) -> bool:
+    """A pause run's span covers whole pauses, so it can run past the hum it belongs to."""
+    return start_s < ke + slack and end_s > ks - slack
 
 
 def _heard_in_pauses(y: np.ndarray, fs: float, t: HumTunables, f0: float, start_s: float, end_s: float,

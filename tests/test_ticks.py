@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.signal import butter, sosfiltfilt
 
 from finalpass_audiobook.checks.ticks import tick_findings
 from synth import RNG, SR, chapter, phrase, room
@@ -17,8 +16,10 @@ def _leave_shared_noise_alone():
 
 
 def _band_limited(x: np.ndarray, sr: int = SR) -> np.ndarray:
-    """Like the rendered narration: nothing above 16 kHz."""
-    return sosfiltfilt(butter(12, 16000, "lowpass", fs=sr, output="sos"), x)
+    """Like the rendered narration: nothing above about 16 kHz (a brick wall at 15.5 kHz)."""
+    spec = np.fft.rfft(x)
+    spec[np.fft.rfftfreq(len(x), 1 / sr) > 15500] = 0
+    return np.fft.irfft(spec, len(x))
 
 
 def _narration() -> tuple[np.ndarray, int, int]:
@@ -75,7 +76,7 @@ def test_found_at_48k_too() -> None:
     x44, at44, _ = _narration()
     t = np.arange(int(len(x44) * sr / SR)) / sr
     x = np.interp(t, np.arange(len(x44)) / SR, x44)
-    x = sosfiltfilt(butter(12, 16000, "lowpass", fs=sr, output="sos"), x)
+    x = _band_limited(x, sr)
     at = int(at44 * sr / SR)
     x[at] += 10 ** (-30 / 20)
     from pathlib import Path

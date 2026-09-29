@@ -118,7 +118,27 @@ def _with_hum(x: np.ndarray, level_dbfs: float, on_s: float, off_s: float, fade_
 def test_any_steady_hum_is_listed_even_very_quiet() -> None:
     x = np.concatenate([_speech(6.0), room(8.0, -110.0)])
     (f,) = hum_findings(chapter(_with_hum(x, -95.0, 0.0, len(x) / SR)))
-    assert f.severity == 3 and abs(f.measures["frequency_hz"] - 60.0) < 0.3
+    assert f.severity == 1 and abs(f.measures["frequency_hz"] - 60.0) < 0.3
+
+
+@pytest.mark.parametrize("loudest, abrupt, severity", [
+    (-80.0, True, 1), (-55.01, True, 1),        # low-level: 1, abrupt or not
+    (-55.0, False, 2), (-40.0, False, 2),       # strong
+    (-55.0, True, 3), (-30.0, True, 3),         # strong and abrupt
+])
+def test_hum_severity_ladder(loudest, abrupt, severity) -> None:
+    from finalpass_audiobook.checks.hum import hum_severity
+    assert hum_severity(loudest, abrupt) == severity
+
+
+def test_strong_hums_grade_by_their_edges() -> None:
+    x = np.concatenate([_speech(6.0), room(8.0, -90.0)])
+    (cut,) = hum_findings(chapter(_with_hum(x, -50.0, 1.0, 10.0)))
+    assert "cuts off abruptly" in cut.problem and cut.severity == 3
+    (faded,) = hum_findings(chapter(_with_hum(x, -50.0, 0.0, 12.0, fade_s=5.0)))
+    assert "abruptly" not in faded.problem and faded.severity == 2
+    (quiet,) = hum_findings(chapter(_with_hum(x, -65.0, 1.0, 10.0)))
+    assert "cuts off abruptly" in quiet.problem and quiet.severity == 1
 
 
 def test_a_hum_that_stops_dead_says_so_and_a_fade_does_not() -> None:
@@ -258,4 +278,4 @@ def test_a_line_steady_only_while_words_sound_is_not_a_hum() -> None:
     assert not any(abs(f.measures["frequency_hz"] - 41.5) < 1 for f in found)
     (steady,) = [f for f in hum_findings(chapter(x + _tones(len(x), ((41.5, -60.0),))))
                  if abs(f.measures["frequency_hz"] - 41.5) < 1]
-    assert steady.severity == 3
+    assert steady.severity == 1

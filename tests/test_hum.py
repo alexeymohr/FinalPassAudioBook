@@ -26,7 +26,7 @@ def test_hum_fading_up_under_speech_is_found() -> None:
     found = hum_findings(chapter(x))
     assert len(found) == 1
     f = found[0]
-    assert f.severity == 3
+    assert f.severity == 1                                     # low-level (builds to -55, under the strong limit)
     assert abs(f.measures["frequency_hz"] - 60.0) < 0.3
     assert "building" in f.problem
     assert f.measures["level_end_dbfs"] > -60

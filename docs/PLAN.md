@@ -70,7 +70,11 @@ and on a real chapter's phrase ends (max 1e-5, identical flags); its tests catch
 
 ### 3.3 Hum
 
-Any steady tone 40 Hz-1 kHz, severity 3, at any level.
+Any steady tone 40 Hz-1 kHz, at any level. Severity (operator, after hearing both
+edges of all 12 hums on the calibration title): 1 for a low-level hum, most of them;
+2 when strong (loudest line ≥ −55 dBFS; the two called strong measured −53.8 and
+−54.3, the loudest of the rest −55.5); 3 when strong and it starts or cuts off
+abruptly. On that title: 2 at severity 3, 10 at 1.
 - Tracked in 2 s windows (a line ≥ 10 dB over its ±10 Hz neighbourhood, held within
   1 Hz for ≥ 3 s; pieces of one line up to 3 s apart joined). A tracked line must
   also be heard in a nearby pause, unless there are no pauses around it (a hum
@@ -83,7 +87,9 @@ Any steady tone 40 Hz-1 kHz, severity 3, at any level.
 - Described from its pauses: every steady line there, loudest first, harmonics
   named. Start and end from the tone's own level; "starts/cuts off abruptly" when
   it changes by ≥ 20 dB in 0.5 s from full level, or — when the cut lands on a
-  word — by ≥ 10 dB in 0.2 s and the line is gone from the next pause.
+  word — by ≥ 10 dB in 0.2 s and the line is gone from the next pause. Heard blind
+  on all 24 edges: 6 of the 8 claimed abrupt were; 2 of the 16 others were abrupt
+  too (7 could not be judged). None of the misses changes a severity.
 
 ### 3.4 Noisy section
 
@@ -168,8 +174,8 @@ app into place only when all checks pass.
 1. Dropout and plosive limits: calibrate on the operator's labelled examples.
 2. The chopped-word model's precision on phrase ends into room tone (its
    evaluation covered clip ends into digital black).
-3. "Starts/cuts off abruptly" on hums found only in pauses: not yet checked by ear; on
-   synthetic audio a cut can be missed when a low-pitched word starts on it.
+3. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic
+   audio a cut can be missed when a low-pitched word starts on it.
 4. A further generic pause rule set (numbers pending from the operator).
 5. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
 6. Breath frames are computed twice per chapter (needs a small FinalPass API change).
