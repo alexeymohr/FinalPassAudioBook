@@ -41,13 +41,19 @@ except hum. Severities are graded on the value the text shows (0.1 dB).
 ### 3.1 Breaths (FinalPass breath check)
 
 - **Mouth-click inhale** (internally "T-inhale": a breath that opens with a mouth
-  release). Graded by the gap before the click (longest stretch at or below
-  −60 dBFS in the 30 ms before it, 0.73 ms RMS) and the click's level:
-  3 = gap ≥ 250 samples at 44.1 kHz (5.7 ms; scaled with the rate) and click ≥
-  narration −20 dB; 2 = the gap, quieter; 1 = no gap ("hard consonant runs into
-  inhale"). Evidence (operator's context-tagged breaths): real mouth clicks had the
-  gap in most cases, consonants running into a breath rarely; the three the
-  operator called "small" were the only ones under narration −20 dB.
+  click). Heard alone, a word-final consonant running into a breath sounds almost
+  the same; the difference is where the click stands. A consonant's release follows
+  its vowel directly; a mouth click stands alone after a pause. So a click (flagged
+  by FinalPass, or at least 8 dB sharp by the click-in-a-pause detector, from 100 ms
+  before to 40 ms after the breath's start) counts only when at least 100 ms have
+  passed since the word (level within 25 dB of the narration, 5 ms RMS). 3 = click
+  ≥ narration −20 dB (0.73 ms RMS peak), 2 = quieter; a click right after its word
+  is not listed. Evidence (operator's context-tagged breaths, one title, 35+
+  chapters): mouth-click inhales 41/49, consonant-then-inhale 0/29, plain breaths
+  3/127, barely audible ticks 0/4; FinalPass's own flag alone 30/39, 5/12, 8/127.
+  Any pause from 100 to 150 ms gives the same result. On 12 chapters: 75 listed
+  (60 at 3) where the old gap rule listed 126, most of them consonants. Held-out:
+  32 of those 75, never heard before, all 32 confirmed by ear.
 - **Loud breath** (grade 3): severity 2 — an artistic call, but clients dislike them.
   A breath that is both is one finding at the higher severity.
 
@@ -103,7 +109,20 @@ breath; listed from speech +3 dB (2 from +6, 3 from +9). The voice itself carrie
 almost nothing below 65 Hz; the loudest peak within 0.1 s is reported. Needs
 labelled examples.
 
-### 3.7 Pause map (informational)
+### 3.7 Click in a pause
+
+A tick or click in the silence between words, severity 3. Inside speech a click is
+not a defect (every t, k, p and ch is one): a speech-wide search listed almost only
+consonants when heard. So only a click in a pause is listed, and only when it is
+brief (in several half-octave bands from 1 to 16 kHz it rises at least 8 dB over
+the same band's loudest level within 15 ms on both sides, the idea of a narration
+de-clicker, reimplemented), at least −45 dBFS at its peak, and at least 100 ms from
+the words and from any breath on both sides (a breath's own mouth click belongs to
+the breath check). Evidence: 64 candidates from looser rules heard across 12
+chapters, 2 confirmed ticks; this rule lists exactly those 2 and nothing else in the
+12 chapters. Set on the same chapters, so a second title must confirm it.
+
+### 3.8 Pause map (informational)
 
 Every pause word to word, with its duration and a guess at its kind from the
 chosen generic rule set; head/tail compared with the rule (±0.1 s). No severity.
@@ -137,11 +156,13 @@ app into place only when all checks pass.
 1. Dropout and plosive limits: calibrate on the operator's labelled examples.
 2. The chopped-word model's precision on phrase ends into room tone (its
    evaluation covered clip ends into digital black).
-3. "Starts/cuts off abruptly" on hums found only in pauses: not yet checked by ear.
+3. "Starts/cuts off abruptly" on hums found only in pauses: not yet checked by ear; on
+   synthetic audio a cut can be missed when a low-pitched word starts on it.
 4. A further generic pause rule set (numbers pending from the operator).
 5. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
 6. Breath frames are computed twice per chapter (needs a small FinalPass API change).
 7. Half-precision weights would save ~25 MB (changes the audited file; needs the
    operator's OK, a recorded SHA-256 and the same equivalence bar).
-8. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
+8. Click in a pause: confirm the limits on a second title.
+9. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
    hands-on check by the operator.

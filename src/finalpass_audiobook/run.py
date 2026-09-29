@@ -15,6 +15,7 @@ from . import __version__
 from .activity import measure
 from .chapter import Chapter, ChapterError
 from .checks.breaths import BreathSeverity, breath_findings
+from .checks.clicks import ClickTunables, click_findings, rise_db
 from .checks.dropouts import DropoutTunables, dropout_findings
 from .checks.hum import HumTunables, hum_findings
 from .checks.noise import NoiseTunables, noise_findings
@@ -26,7 +27,7 @@ from .model import ModelError, load
 from .netguard import NetworkGuard
 from .rules import RULE_SETS, RuleSet
 
-STAGES = ("loading", "breaths", "pauses", "hum", "noise", "dropouts", "plosives", "chopped words")
+STAGES = ("loading", "breaths", "pauses", "hum", "noise", "dropouts", "plosives", "clicks", "chopped words")
 
 
 @dataclass(frozen=True)
@@ -39,12 +40,14 @@ class RunOptions:
     noise: NoiseTunables = field(default_factory=NoiseTunables)
     dropouts: DropoutTunables = field(default_factory=DropoutTunables)
     plosives: PlosiveTunables = field(default_factory=PlosiveTunables)
+    clicks: ClickTunables = field(default_factory=ClickTunables)
     truncation_tunables: TruncationTunables = field(default_factory=TruncationTunables)
 
     def tunables(self) -> dict:
         return {"breaths": self.breaths.as_dict(), "breath_severity": self.breath_severity.as_dict(),
                 "hum": self.hum.as_dict(), "noise": self.noise.as_dict(),
                 "dropouts": self.dropouts.as_dict(), "plosives": self.plosives.as_dict(),
+                "clicks": self.clicks.as_dict(),
                 "truncation": self.truncation_tunables.as_dict() if self.truncation else "off"}
 
 
@@ -61,7 +64,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
             problem=f"file contains {ch.invalid_samples.size} invalid (NaN/Inf) samples — corrupt audio",
             measures={"invalid_samples": int(ch.invalid_samples.size)}))
     say("breaths")
-    breath_list, breaths = breath_findings(ch, opts.breaths, opts.breath_severity)
+    rise = rise_db(ch.x, ch.sr, opts.clicks)
+    breath_list, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
     findings += breath_list
     say("pauses")
     act = measure(ch)
@@ -80,6 +84,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     say("plosives")
     spans = act.breath_spans + tuple((e.start_sample, e.end_sample) for e in breaths.breaths)
     findings += plosive_findings(ch, spans, opts.plosives)
+    say("clicks")
+    findings += click_findings(ch, act.pauses, spans, opts.clicks, rise)
     records: list[dict] = []
     if model is not None:
         say("chopped words")
@@ -87,7 +93,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         records = score_phrase_ends(ch, ends, model, opts.truncation_tunables)
         findings += truncation_findings(ch, records)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
-    counts = {"breaths": breaths.counts.breaths, "mouth_click_inhales": breaths.counts.t_inhale,
+    counts = {"breaths": breaths.counts.breaths, "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
               "loud_breaths": breaths.counts.grade_3, "pauses": len(act.pauses),
               "phrase_ends_scored": len(records)}
     for f in findings:

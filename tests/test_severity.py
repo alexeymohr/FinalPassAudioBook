@@ -28,47 +28,78 @@ def test_ladder_boundaries_are_inclusive() -> None:
 # --- mouth-click inhale ----------------------------------------------------
 
 
-def _event(gap: int | None = 0, click_db: float | None = -10.0, t_inhale: bool = True, grade: int = 2,
-           start: int = 44100) -> BreathEvent:
+def _event(start: int, t_inhale: bool = False, grade: int = 2) -> BreathEvent:
     return BreathEvent(start_sample=start, end_sample=start + 11025, start_time="0:00:01.000",
                        end_time="0:00:01.250", duration_ms=250, peak_db=-20.0, body_db=-30.0,
                        noticeability_db=-28.0, grade=grade, t_inhale=t_inhale, t_inhale_score=0.5,
-                       click_gap_samples=gap, click_gap_ms=None if gap is None else gap / 44.1,
-                       click_rel_db=click_db)
+                       click_gap_samples=None, click_gap_ms=None, click_rel_db=None)
 
 
-@pytest.mark.parametrize("gap, click_db, severity", [
-    (250, -20.0, 3), (1323, -5.0, 3),        # clear gap, harsh click
-    (250, -20.01, 2), (600, -23.9, 2),       # clear gap, small click
-    (249, -5.0, 1), (0, -5.0, 1), (None, None, 1),
+@pytest.mark.parametrize("silence_ms, click_db, severity", [
+    (100, -20.0, 3), (900, -5.0, 3),         # after a pause, harsh click
+    (100, -20.01, 2), (400, -30.0, 2),       # after a pause, small click
+    (99, -5.0, 0), (0, -5.0, 0),             # right after the word: a consonant, not listed
 ])
-def test_mouth_click_severity_at_44k1(gap, click_db, severity) -> None:
-    assert mouth_click_severity(_event(gap, click_db), 44100) == severity
+def test_mouth_click_severity(silence_ms, click_db, severity) -> None:
+    assert mouth_click_severity(silence_ms, click_db) == severity
 
 
-def test_gap_limit_scales_with_the_sample_rate() -> None:
-    """250 samples at 44.1 kHz is 5.67 ms: 272 samples at 48 kHz."""
-    assert mouth_click_severity(_event(271), 48000) == 1
-    assert mouth_click_severity(_event(273), 48000) == 3
+def _tick(peak_dbfs: float) -> np.ndarray:
+    n = int(0.003 * SR)
+    y = np.random.default_rng(7).standard_normal(n) * np.exp(-np.arange(n) / (0.0006 * SR))
+    return y / np.max(np.abs(y)) * 10 ** (peak_dbfs / 20)
 
 
-def test_breath_findings_wording_and_combined_severity(monkeypatch: pytest.MonkeyPatch) -> None:
-    events = [_event(0, -5.0, start=44100),                            # run-on consonant: 1
-              _event(400, -5.0, start=4 * 44100),                      # mouth-click inhale: 3
-              _event(0, -5.0, t_inhale=False, grade=3, start=8 * 44100),   # loud breath: 2
-              _event(0, -5.0, grade=3, start=12 * 44100),              # both: the higher, 2
-              _event(0, -5.0, t_inhale=False, grade=2, start=16 * 44100)]  # ordinary: not listed
-    fake = BreathAssetResult(path="c.wav", sample_rate=SR, duration_seconds=20.0, narration_dbfs=-18.0,
+def _clicky_narration() -> tuple[np.ndarray, dict[str, int]]:
+    """Phrases; after some, a tick then (where the fake breath check puts it) a breath."""
+    parts, at, n = [], {}, 0
+
+    def add(y: np.ndarray) -> None:
+        nonlocal n
+        parts.append(y)
+        n += len(y)
+
+    for name, silence_s, peak in (("pause_harsh", 0.30, -12.0), ("closure", 0.04, -12.0),
+                                  ("pause_small", 0.30, -40.0), ("none", None, None)):
+        add(phrase(3)[: -int(0.06 * SR)])            # ends on the word itself
+        if silence_s is None:
+            add(room(1.0))
+            at[name] = n - int(0.6 * SR)
+            continue
+        add(room(silence_s))
+        at[name] = n
+        add(_tick(peak))
+        add(room(1.0))
+    add(phrase(3))
+    return np.concatenate(parts), at
+
+
+def test_breath_findings_mouth_click_needs_a_pause_before_the_click(monkeypatch: pytest.MonkeyPatch) -> None:
+    x, at = _clicky_narration()
+    lead = int(0.02 * SR)
+    events = [_event(at["pause_harsh"] + lead),                         # click after a pause: 3
+              _event(at["closure"] + lead, t_inhale=True),              # right after the word: not listed
+              _event(at["pause_small"] + lead),                         # quiet click after a pause: 2
+              _event(at["none"], grade=3)]                              # loud breath, no click: 2
+    fake = BreathAssetResult(path="c.wav", sample_rate=SR, duration_seconds=len(x) / SR, narration_dbfs=-18.0,
                              counts=BreathCounts(), breaths=events)
     monkeypatch.setattr(breaths_mod, "analyze_breaths", lambda audio, tunables: fake)
-    found, _ = breath_findings(chapter(room(1.0)))
-    assert [f.severity for f in found] == [1, 3, 2, 2]
-    assert found[0].problem == "hard consonant runs into inhale (possible mouth-click inhale)"
-    assert found[1].problem.startswith("mouth-click inhale")
-    assert found[2].problem == "loud breath"
-    assert found[3].problem == "hard consonant runs into inhale (possible mouth-click inhale); loud breath"
+    found, _ = breath_findings(chapter(x))
+    assert [(f.severity, f.problem.split(":")[0]) for f in found] == [
+        (3, "mouth-click inhale"), (2, "small mouth-click inhale"), (2, "loud breath")]
+    assert abs(found[0].start_sample - at["pause_harsh"]) < int(0.004 * SR)   # listed at the click
+    assert found[0].measures["ms_since_word"] >= 250
     assert all("T-inhale" not in f.problem for f in found)
     assert BreathSeverity().loud_breath == 2
+
+
+def test_a_click_that_is_also_a_loud_breath_is_one_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    x, at = _clicky_narration()
+    fake = BreathAssetResult(path="c.wav", sample_rate=SR, duration_seconds=len(x) / SR, narration_dbfs=-18.0,
+                             counts=BreathCounts(), breaths=[_event(at["pause_small"] + int(0.02 * SR), grade=3)])
+    monkeypatch.setattr(breaths_mod, "analyze_breaths", lambda audio, tunables: fake)
+    (f,) = breath_findings(chapter(x))[0]
+    assert f.severity == 2 and f.problem.startswith("small mouth-click inhale") and f.problem.endswith("; loud breath")
 
 
 # --- hum ---------------------------------------------------------------------
