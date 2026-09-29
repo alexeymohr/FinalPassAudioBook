@@ -1,0 +1,33 @@
+# Never commit audio, models, or local evaluation data.
+*.wav
+*.wave
+*.bwf
+*.aifc
+*.m4a
+*.m4b
+*.ogg
+*.opus
+*.safetensors
+# Reports carry client file names: never commit them.
+*.csv
+report.json
+issues.txt
+pauses.txt
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.m4a
+models/
+resources/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+fpab-report/
+
+# macOS app build output
+macos/build/
+macos/.build/
+.DS_Store
+!macos/Resources/

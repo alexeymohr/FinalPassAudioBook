@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling==1.32.4"]   # pinned: published 2026-09-20, before the 7-day cutoff
+build-backend = "hatchling.build"
+
+[project]
+name = "finalpass-audiobook"
+version = "0.1.0.dev0"
+description = "Local, offline QC for AI-narrated audiobook chapters."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # Shared audio I/O, clock times and the breath check. Pinned to a commit.
+    "finalpass",
+    "click>=8.1",
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "rich>=13.7",
+    "scipy>=1.12",
+    "soundfile>=0.12.1",
+]
+
+[project.optional-dependencies]
+# The audited torch implementation of the truncated-word model: the reference the
+# numpy port (used for every run) is tested against. Versions are the ones audited
+# for the 2026-08-13 evaluation; nothing here is fetched at analysis time.
+truncation = [
+    "torch==2.13.0",
+    "torchaudio==2.11.0",
+    "transformers==5.14.1",
+    "safetensors==0.8.0",
+]
+
+[project.scripts]
+fpab = "finalpass_audiobook.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+# 7-day supply-chain hold: nothing published after this instant can resolve.
+# Move it forward deliberately, never to within 7 days of today.
+exclude-newer = "2026-09-21T00:00:00Z"
+
+[tool.uv.sources]
+finalpass = { git = "https://github.com/alexeymohr/FinalPass", rev = "4b7d9b5f33c24df69beef94a3131aff099ff7b3e" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/finalpass_audiobook"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
