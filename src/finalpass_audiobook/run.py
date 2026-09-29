@@ -87,9 +87,11 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     spans = act.breath_spans + tuple((e.start_sample, e.end_sample) for e in breaths.breaths)
     findings += plosive_findings(ch, spans, opts.plosives)
     say("clicks")
-    findings += click_findings(ch, act.pauses, spans, opts.clicks, rise)
+    clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise)
     say("ticks")
-    findings += tick_findings(ch, opts.ticks)
+    ticks = tick_findings(ch, opts.ticks)
+    near = int(0.003 * ch.sr)                  # a digital tick in a pause: listed once, as the tick
+    findings += [c for c in clicks if all(abs(c.start_sample - t.start_sample) > near for t in ticks)] + ticks
     records: list[dict] = []
     if model is not None:
         say("chopped words")

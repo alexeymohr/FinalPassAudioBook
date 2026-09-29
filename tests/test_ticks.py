@@ -96,3 +96,14 @@ def test_low_sample_rates_are_skipped() -> None:
     audio = AudioFile(path=Path("c.wav"), data=x[:, None], sample_rate=sr, bit_depth=16, channel_count=1,
                       duration_seconds=1.0)
     assert tick_findings(Chapter(path=Path("c.wav"), audio=audio, x=x, sr=sr)) == []
+
+
+def test_a_digital_tick_in_a_pause_is_listed_once(tmp_path) -> None:
+    import soundfile as sf
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    x, at, _ = _narration()
+    x[at] += 10 ** (-30 / 20)
+    p = tmp_path / "c.wav"
+    sf.write(p, x, SR, subtype="PCM_24")
+    found = [f for f in analyze_file(p, RunOptions(truncation=False)).findings if f.check in ("ticks", "clicks")]
+    assert [f.check for f in found] == ["ticks"]

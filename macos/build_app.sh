@@ -106,7 +106,29 @@ find "$ENGINE/python/bin" -type l ! -name 'python3' ! -name 'python3.12' -delete
 find "$SITE" -depth -type d \( -name tests -o -name testing -o -name __pycache__ \) -path '*/scipy/*' -exec rm -rf {} +
 find "$SITE"/numpy -depth -type d -name tests -exec rm -rf {} +
 find "$ENGINE" -name '*.pyi' -delete
-FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "import finalpass_audiobook.cli, scipy.signal, scipy.ndimage, soundfile; print('imports ok')"
+# Standard-library parts no run imports (the imports a run makes were recorded; the few lazy uses by
+# dependencies — scipy's multiprocess map, click's browser launch — are functions fpab never calls).
+rm -rf "$STD"/{pydoc_data,asyncio,xml,xmlrpc,multiprocessing,sqlite3,curses,dbm,wsgiref,venv,__phello__} \
+       "$STD"/{_pydecimal,_pydatetime,_pyio,doctest,pdb,bdb,tarfile,pickletools,webbrowser,imaplib,nntplib}.py \
+       "$STD"/{poplib,smtplib,ftplib,telnetlib,mailbox,mailcap,cgi,cgitb,xdrlib,uu,sndhdr,imghdr,aifc}.py \
+       "$STD"/{sunau,chunk,wave,pipes,crypt,profile,cProfile,pstats,trace,tabnanny,pyclbr,modulefinder}.py \
+       "$STD"/{zipapp,antigravity,this,__hello__,sched,shelve,rlcompleter}.py \
+       "$STD"/lib-dynload/{_dbm,_crypt}.cpython-312-darwin.so
+
+say "Strip local symbols from every compiled file (they only serve debuggers)"
+# strip invalidates a binary's signature and macOS kills unsigned code, so each stripped file gets a
+# plain ad-hoc signature at once (the real signing, with entitlements, comes later). Only regular
+# files inside the bundle, never through a link.
+before=$(du -sk "$ENGINE" | cut -f1)
+while IFS= read -r f; do
+    [[ -L "$f" ]] && continue
+    real="$(readlink -f "$f")"
+    [[ "$real" == "$ENGINE"/* ]] || die "refusing to strip outside the bundle: $f -> $real"
+    strip -x "$real" 2>/dev/null || die "strip failed: $real"
+    codesign -s - -f "$real" 2>/dev/null || die "re-sign after strip failed: $real"
+done < <(find "$ENGINE" -type f \( -name '*.so' -o -name '*.dylib' -o -path '*/bin/python3.12' \))
+echo "stripped: $(( (before - $(du -sk "$ENGINE" | cut -f1)) / 1024 )) MB"
+FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "import finalpass_audiobook.cli, finalpass_audiobook.run, scipy.signal, scipy.ndimage, soundfile, click._termui_impl, rich.progress, pydoc, unittest; print('imports ok')"
 
 say "Smoke checks on error paths (before signing: once signed, the engine only runs inside the app)"
 SMOKE="$STAGE/smoke"
