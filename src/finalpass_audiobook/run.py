@@ -16,6 +16,7 @@ from .activity import measure
 from .chapter import Chapter, ChapterError
 from .checks.breaths import BreathSeverity, breath_findings
 from .checks.clicks import ClickTunables, click_findings, rise_db
+from .checks.ticks import TickTunables, tick_findings
 from .checks.dropouts import DropoutTunables, dropout_findings
 from .checks.hum import HumTunables, hum_findings
 from .checks.noise import NoiseTunables, noise_findings
@@ -27,7 +28,7 @@ from .model import ModelError, load
 from .netguard import NetworkGuard
 from .rules import RULE_SETS, RuleSet
 
-STAGES = ("loading", "breaths", "pauses", "hum", "noise", "dropouts", "plosives", "clicks", "chopped words")
+STAGES = ("loading", "breaths", "pauses", "hum", "noise", "dropouts", "plosives", "clicks", "ticks", "chopped words")
 
 
 @dataclass(frozen=True)
@@ -41,13 +42,14 @@ class RunOptions:
     dropouts: DropoutTunables = field(default_factory=DropoutTunables)
     plosives: PlosiveTunables = field(default_factory=PlosiveTunables)
     clicks: ClickTunables = field(default_factory=ClickTunables)
+    ticks: TickTunables = field(default_factory=TickTunables)
     truncation_tunables: TruncationTunables = field(default_factory=TruncationTunables)
 
     def tunables(self) -> dict:
         return {"breaths": self.breaths.as_dict(), "breath_severity": self.breath_severity.as_dict(),
                 "hum": self.hum.as_dict(), "noise": self.noise.as_dict(),
                 "dropouts": self.dropouts.as_dict(), "plosives": self.plosives.as_dict(),
-                "clicks": self.clicks.as_dict(),
+                "clicks": self.clicks.as_dict(), "ticks": self.ticks.as_dict(),
                 "truncation": self.truncation_tunables.as_dict() if self.truncation else "off"}
 
 
@@ -86,6 +88,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     findings += plosive_findings(ch, spans, opts.plosives)
     say("clicks")
     findings += click_findings(ch, act.pauses, spans, opts.clicks, rise)
+    say("ticks")
+    findings += tick_findings(ch, opts.ticks)
     records: list[dict] = []
     if model is not None:
         say("chopped words")

@@ -122,7 +122,19 @@ the breath check). Evidence: 64 candidates from looser rules heard across 12
 chapters, 2 confirmed ticks; this rule lists exactly those 2 and nothing else in the
 12 chapters. Set on the same chapters, so a second title must confirm it.
 
-### 3.8 Pause map (informational)
+### 3.8 Digital tick
+
+A guard for edit and processing glitches, severity 3. Rendered narration stops at
+about 16 kHz, so a spike above 16.5 kHz did not come from the voice. Listed only
+when it is extremely short (≤ 8 samples at 44.1 kHz, at half its peak), loud
+(≥ −60 dBFS above 16.5 kHz) and alone (≥ 20 dB over everything else above
+16.5 kHz within 0.5–10 ms on both sides, and the sharpest sample step there); a
+tick inside a consonant blends in. Evidence: 32 candidates from a looser rule were
+all consonants by ear; this rule lists none on the whole title (41 files). Planted
+one-sample spikes: 100 % found in pauses at −40 dBFS, about half inside speech at
+−30 dBFS. No real example has been heard yet.
+
+### 3.9 Pause map (informational)
 
 Every pause word to word, with its duration and a guess at its kind from the
 chosen generic rule set; head/tail compared with the rule (±0.1 s). No severity.
@@ -163,6 +175,7 @@ app into place only when all checks pass.
 6. Breath frames are computed twice per chapter (needs a small FinalPass API change).
 7. Half-precision weights would save ~25 MB (changes the audited file; needs the
    operator's OK, a recorded SHA-256 and the same equivalence bar).
-8. Click in a pause: confirm the limits on a second title.
+8. Click in a pause: confirm the limits on a second title. Digital tick: no real
+   example yet (limits set with planted spikes).
 9. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
    hands-on check by the operator.
