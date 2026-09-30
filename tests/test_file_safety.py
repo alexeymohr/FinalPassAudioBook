@@ -1,0 +1,163 @@
+"""Reports land only where they belong: never over a file this tool did not write, never through a
+symlink, never over another WAV's report; a bad input or output never loses the run. Synthetic audio only."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+import soundfile as sf
+from click.testing import CliRunner
+
+from finalpass_audiobook.cli import main
+from finalpass_audiobook.output import _cell, is_ours, report_source
+from report_csv import read_report
+from synth import SR, phrase, room
+
+
+def _wav(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sf.write(str(path), np.concatenate([room(1.2), phrase(4), room(0.9), phrase(3), room(3.0)]), SR, subtype="PCM_24")
+    return path
+
+
+def _check(*args: str):
+    return CliRunner().invoke(main, ["check", "--no-truncation", *args])
+
+
+def _done(r) -> list[dict]:        # noqa: ANN001
+    return [json.loads(line) for line in r.stdout.splitlines()
+            if line.startswith("{") and json.loads(line)["event"] == "file_done"]
+
+
+def test_the_run_report_never_replaces_files_it_did_not_write(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "ch01.wav")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "issues.txt").write_text("my notes\n")
+    r = _check("--out", str(out), str(a))
+    assert r.exit_code == 2 and "did not write" in r.output
+    assert (out / "issues.txt").read_text() == "my notes\n" and not (out / "report.json").exists()
+    (out / "issues.txt").unlink()
+    assert _check("--out", str(out), str(a)).exit_code == 0
+    assert _check("--out", str(out), str(a)).exit_code == 0             # its own report is replaced on a re-run
+
+
+def test_a_per_file_csv_never_takes_a_run_report_name(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "issues.wav")
+    r = _check("--csv-per-file", "--out", str(tmp_path), str(a))
+    assert r.exit_code == 0, r.output
+    assert is_ours(tmp_path / "issues (2).csv")
+    assert (tmp_path / "issues.csv").read_text(encoding="utf-8-sig").startswith("file,start_time")
+
+
+@pytest.mark.parametrize("dangling", [True, False])
+def test_a_csv_is_never_written_through_a_symlink(tmp_path: Path, dangling: bool) -> None:
+    a = _wav(tmp_path / "in" / "ch01.wav")
+    elsewhere = tmp_path / "elsewhere.txt"
+    if not dangling:
+        elsewhere.write_text("keep\n")
+    (tmp_path / "in" / "ch01.csv").symlink_to(elsewhere)
+    r = _check("--csv-per-file", str(a))
+    assert r.exit_code == 0, r.output
+    assert is_ours(tmp_path / "in" / "ch01 (2).csv")
+    assert not elsewhere.exists() if dangling else elsewhere.read_text() == "keep\n"
+
+
+def test_two_books_chapter_01_never_share_a_report_across_runs(tmp_path: Path) -> None:
+    a, b = _wav(tmp_path / "bookA" / "ch01.wav"), _wav(tmp_path / "bookB" / "ch01.wav")
+    out = tmp_path / "csvs"
+    assert _check("--csv-dir", str(out), str(a), str(b)).exit_code == 0
+    first = (out / "ch01.csv").read_bytes()
+    assert report_source(out / "ch01.csv") == ("ch01.wav", str((tmp_path / "bookA").resolve()))
+    assert _check("--csv-dir", str(out), str(b)).exit_code == 0           # book B alone, later
+    assert (out / "ch01.csv").read_bytes() == first                        # book A's report untouched
+    assert report_source(out / "ch01 (2).csv") == ("ch01.wav", str((tmp_path / "bookB").resolve()))
+    assert sorted(p.name for p in out.iterdir()) == ["ch01 (2).csv", "ch01.csv"]
+    summary, _, _ = read_report(out / "ch01 (2).csv")
+    assert summary["folder"] == str((tmp_path / "bookB").resolve())
+
+
+def test_a_numbered_name_is_never_another_wavs_own(tmp_path: Path) -> None:
+    a, a2 = _wav(tmp_path / "a.wav"), _wav(tmp_path / "a (2).wav")
+    (tmp_path / "a.csv").write_text("mine\n")
+    assert _check("--csv-per-file", str(a)).exit_code == 0
+    assert not (tmp_path / "a (2).csv").exists()                           # that is "a (2).wav"'s own name
+    assert report_source(tmp_path / "a (3).csv")[0] == "a.wav"
+    assert _check("--csv-per-file", str(a2)).exit_code == 0
+    assert report_source(tmp_path / "a (2).csv")[0] == "a (2).wav"
+    assert (tmp_path / "a.csv").read_text() == "mine\n"
+
+
+def test_a_csv_in_another_encoding_is_someone_elses(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "ch01.wav")
+    (tmp_path / "ch01.csv").write_bytes(b"caf\xe9,notes\n")                 # Latin-1, as Excel may save
+    assert _check("--csv-per-file", str(a)).exit_code == 0
+    assert (tmp_path / "ch01.csv").read_bytes() == b"caf\xe9,notes\n" and is_ours(tmp_path / "ch01 (2).csv")
+
+
+def test_a_header_that_only_starts_like_ours_is_not_ours(tmp_path: Path) -> None:
+    p = tmp_path / "x.csv"
+    p.write_text("file,time,problem,severity,end_time,check,measures,my notes\n", encoding="utf-8-sig")
+    assert not is_ours(p)
+    p.write_text("FinalPass AudioBook reports,1\n", encoding="utf-8-sig")
+    assert not is_ours(p)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+def test_an_unreadable_file_is_skipped_and_the_batch_goes_on(tmp_path: Path) -> None:
+    a, b = _wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")
+    b.chmod(0)
+    try:
+        r = _check("--csv-dir", str(tmp_path / "c"), "--progress", "jsonl", str(a), str(b))
+    finally:
+        b.chmod(0o644)
+    assert r.exit_code == 0, r.output
+    done = _done(r)
+    assert done[0]["csv"] and done[1]["csv"] is None and any("skipped" in n for n in done[1]["notes"])
+
+
+def test_an_unusable_out_folder_stops_before_the_analysis(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "a.wav")
+    (tmp_path / "file").write_text("x")
+    r = _check("--out", str(tmp_path / "file" / "sub"), str(a))
+    assert r.exit_code == 2 and "cannot write the run report" in r.output
+
+
+def test_a_run_report_that_cannot_be_written_still_shows_the_results(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.output as output
+
+    def full_disk(*a, **k):        # noqa: ANN002, ANN003
+        raise OSError("No space left on device")
+    monkeypatch.setattr(output, "write", full_disk)
+    a = _wav(tmp_path / "a.wav")
+    r = _check("--out", str(tmp_path / "rep"), str(a))
+    assert r.exit_code == 1
+    assert "a.wav" in r.output and "No space left" in r.output and "network attempts: 0" in r.output
+
+
+def test_a_csv_that_fails_to_write_for_any_reason_is_a_note(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.output as output
+
+    def broken(*a, **k):           # noqa: ANN002, ANN003
+        raise UnicodeEncodeError("utf-8", "x", 0, 1, "surrogates not allowed")
+    monkeypatch.setattr(output, "file_csv", broken)
+    a, b = _wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")
+    r = _check("--csv-per-file", "--progress", "jsonl", str(a), str(b))
+    done = _done(r)
+    assert len(done) == 2 and all(e["csv"] is None and any("could not write" in n for n in e["notes"]) for e in done)
+
+
+def test_formula_starts_in_file_names_are_neutralised() -> None:
+    for bad in ("=1+1.wav", "+1.wav", "-1.wav", "@x.wav", "\t=1.wav", "\r=1.wav"):
+        assert _cell(bad) == "'" + bad
+    assert _cell("chapter 1.wav") == "chapter 1.wav"
+
+
+def test_one_file_named_twice_is_checked_once(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "in" / "ch01.wav")
+    r = _check("--csv-per-file", "--progress", "jsonl", str(a), str(tmp_path / "in"), str(tmp_path / "in" / "." / "ch01.wav"))
+    assert r.exit_code == 0 and len(_done(r)) == 1
+    assert sorted(p.name for p in (tmp_path / "in").glob("*.csv")) == ["ch01.csv"]

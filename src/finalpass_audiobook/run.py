@@ -1,6 +1,7 @@
 """Run every check over a set of chapter files, inside the network guard."""
 from __future__ import annotations
 
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import finalpass
+import numpy as np
 from finalpass.breath_check import BreathTunables
 from finalpass.errors import FinalPassError
 
@@ -53,27 +55,62 @@ class RunOptions:
                 "truncation": self.truncation_tunables.as_dict() if self.truncation else "off"}
 
 
-def _audio_format(path: Path) -> str:
+MIN_DURATION_S = 1.0                     # shorter than this cannot be a chapter
+_DATA_SIZE = re.compile(r"^data\s*:\s*(\d+)\s*\(should be (\d+)\)", re.MULTILINE)
+
+
+def _audio_info(path: Path) -> tuple[str, str]:
+    """(format line, libsndfile's header log) — both courtesies: never fail a file over them."""
     try:
         import soundfile as sf
         info = sf.info(str(path))
-        return f"{info.format_info}, {info.subtype_info}"
-    except Exception:                    # the format line is a courtesy; never fail a file over it
-        return ""
+        return f"{info.format_info}, {info.subtype_info}", info.extra_info or ""
+    except Exception:
+        return "", ""
+
+
+def _file_event(ch: Chapter, start: int, end: int, problem: str, **measures) -> Finding:
+    return Finding(file=ch.name, check="file", start_sample=start, end_sample=end, start_time=ch.clock(start),
+                   end_time=ch.clock(end), severity=3, problem=problem, measures=measures)
+
+
+def _file_findings(ch: Chapter, header_log: str) -> list[Finding]:
+    """Whole-file problems, each severity 3: corrupt samples, a file cut short, no narration, too short."""
+    out, n = [], len(ch.x)
+    if ch.invalid_samples.size:
+        a, b = int(ch.invalid_samples[0]), int(ch.invalid_samples[-1])
+        out.append(_file_event(ch, a, b, f"file contains {ch.invalid_samples.size} invalid (NaN/Inf) samples — "
+                                         "corrupt audio", invalid_samples=int(ch.invalid_samples.size)))
+    m = _DATA_SIZE.search(header_log)
+    if m and int(m.group(2)) < int(m.group(1)) < 0x7FFFFFFF:     # 0 / 0xFFFFFFFF: a header never finished
+        out.append(_file_event(ch, n, n, "file is cut short: its audio ends before its header says it should",
+                               data_bytes=int(m.group(2)), header_bytes=int(m.group(1))))
+    if ch.duration_s < MIN_DURATION_S:
+        out.append(_file_event(ch, 0, n, f"file is only {ch.duration_s * 1000:.0f} ms long",
+                               duration_ms=round(ch.duration_s * 1000)))
+    elif not np.isfinite(ch.narration_dbfs):
+        out.append(_file_event(ch, 0, n, "no narration found in the file"))
+    return out
+
+
+def _clear_of_invalid(findings: list[Finding], ch: Chapter, pad_s: float = 0.005) -> list[Finding]:
+    """Drop what the zeroed NaN/Inf samples themselves caused (a hole, its edges): the file event covers it."""
+    bad, pad = ch.invalid_samples, int(pad_s * ch.sr)
+    if not bad.size:
+        return findings
+    def near(f: Finding) -> bool:            # noqa: E306
+        k = np.searchsorted(bad, f.start_sample - pad)
+        return k < bad.size and bad[k] <= f.end_sample + pad
+    return [f for f in findings if f.check == "file" or not near(f)]
 
 
 def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None) -> FileResult:
     say = stage or (lambda name: None)
     say("loading")
     ch = Chapter.load(path)
-    findings: list[Finding] = []
-    if ch.invalid_samples.size:
-        s = int(ch.invalid_samples[0])
-        findings.append(Finding(
-            file=ch.name, check="file", start_sample=s, end_sample=int(ch.invalid_samples[-1]),
-            start_time=ch.clock(s), end_time=ch.clock(int(ch.invalid_samples[-1])), severity=3,
-            problem=f"file contains {ch.invalid_samples.size} invalid (NaN/Inf) samples — corrupt audio",
-            measures={"invalid_samples": int(ch.invalid_samples.size)}))
+    audio_format, header_log = _audio_info(path)
+    findings: list[Finding] = _file_findings(ch, header_log)
+    notes: list[str] = []
     say("breaths")
     rise = rise_db(ch.x, ch.sr, opts.clicks)
     breath_list, quiet_breaths, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
@@ -91,23 +128,32 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     noise_list, floor = noise_findings(ch, opts.noise, exclude=tones)
     findings += noise_list
     say("dropouts")
-    findings += dropout_findings(ch, opts.dropouts)
+    dropouts: list[Finding] = []
+    if 0 < ch.audio.bit_depth <= 8:              # 8-bit steps round quiet audio to exact zero: no dropout test
+        notes.append("dropout check skipped: 8-bit audio")
+    else:
+        dropouts = dropout_findings(ch, opts.dropouts)
+    findings += dropouts
     say("plosives")
     spans = act.breath_spans + tuple((e.start_sample, e.end_sample) for e in breaths.breaths)
     mouth_clicks = tuple((f.start_sample, f.end_sample) for f in breath_list if f.measures.get("mouth_click") == "yes")
     findings += plosive_findings(ch, mouth_clicks, opts.plosives)
     say("clicks")
-    clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise)
+    clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise, act.first_sound, act.last_sound)
     say("ticks")
-    ticks = tick_findings(ch, opts.ticks)
-    near = int(0.003 * ch.sr)                  # a digital tick in a pause: listed once, as the tick
-    findings += [c for c in clicks if all(abs(c.start_sample - t.start_sample) > near for t in ticks)] + ticks
+    ends = clip_ends(ch, opts.truncation_tunables)
+    near = int(0.003 * ch.sr)
+    # The step into and out of a dropout, or into the digital black at a clip end, is that event's
+    # own edge, not a separate tick; a digital tick in a pause is listed once, as the tick.
+    edges = [e for d in dropouts for e in (d.start_sample, d.end_sample)] + list(ends)
+    ticks = [k for k in tick_findings(ch, opts.ticks) if all(abs(k.start_sample - e) > near for e in edges)]
+    findings += [c for c in clicks if all(abs(c.start_sample - k.start_sample) > near for k in ticks)] + ticks
     records: list[dict] = []
     if model is not None:
         say("chopped words")
-        ends = clip_ends(ch, opts.truncation_tunables)
         records = score_phrase_ends(ch, ends, model, opts.truncation_tunables)
         findings += truncation_findings(ch, records)
+    findings = _clear_of_invalid(findings, ch)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
     counts = {"breaths": breaths.counts.breaths,
               "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
@@ -118,19 +164,21 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         counts[f"sev_{f.severity}"] = counts.get(f"sev_{f.severity}", 0) + 1
     return FileResult(
         file=ch.name, path=str(path), sample_rate=ch.sr, duration_seconds=round(ch.duration_s, 3),
-        audio_format=_audio_format(path), channels=ch.audio.channel_count,
+        audio_format=audio_format, channels=ch.audio.channel_count,
         narration_dbfs=round(ch.narration_dbfs, 2) if ch.narration_dbfs == ch.narration_dbfs else None,
         noise_floor_dbfs=round(floor, 1) if floor is not None else None,
         findings=findings, informational=sorted(quiet_breaths, key=lambda f: f.start_sample), pauses=pauses, truncation_candidates=records, counts=counts,
-        notes=ch.notes + [n for n in breaths.notes if n not in ch.notes],
+        notes=ch.notes + [n for n in breaths.notes if n not in ch.notes] + notes,
     )
 
 
 def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
         stage: Callable[[int, str], None] | None = None,
-        file_done: Callable[[int, FileResult], None] | None = None) -> RunReport:
+        file_done: Callable[[int, FileResult], None] | None = None,
+        model_loaded: Callable[[bool], None] | None = None) -> RunReport:
     """Check every file. `progress(i, n, path)` before each file, `stage(i, name)` as each check
-    starts (i = -1 while the model loads), `file_done(i, result)` as each file finishes."""
+    starts (i = -1 while the model loads), `file_done(i, result)` as each file finishes, and
+    `model_loaded(ok)` once, before the first file, when the chopped-word check is on."""
     started = datetime.now(timezone.utc).replace(microsecond=0)
     run_id = started.strftime("%Y-%m-%dT%H-%M-%SZ") + "-" + secrets.token_hex(3)
     notes: list[str] = []
@@ -144,6 +192,8 @@ def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
                 model = load()
             except ModelError as exc:
                 notes.append(f"truncation check skipped: {exc}")
+            if model_loaded:
+                model_loaded(model is not None)
         for i, path in enumerate(paths):
             if progress:
                 progress(i, len(paths), path)

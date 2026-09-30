@@ -147,6 +147,14 @@ def test_malformed_weight_files_are_refused(edit, tail) -> None:  # noqa: ANN001
         T.parse_safetensors(_raw(t, edit, tail))
 
 
+def test_two_tensors_over_the_same_bytes_are_refused() -> None:
+    """Overlap on its own: no gap and no trailing bytes to give it away."""
+    spec = {"dtype": "F32", "shape": [2], "data_offsets": [0, 8]}
+    h = json.dumps({"a": spec, "b": spec}).encode()
+    with pytest.raises(T.WeightsError, match="overlap"):
+        T.parse_safetensors(struct.pack("<Q", len(h)) + h + np.ones(2, "<f4").tobytes())
+
+
 def test_arguments_the_reference_refuses_are_refused() -> None:
     cfg = _tiny()
     m = T.TruncationModel(_weights(cfg), cfg)

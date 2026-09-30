@@ -4,8 +4,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import unicodedata
-
 import click
 from rich.console import Console
 from rich.markup import escape
@@ -19,12 +17,19 @@ AUDIO_SUFFIXES = {".wav", ".bwf"}       # FinalPass's reader refuses ".wave"
 
 
 def _expand(paths: tuple[Path, ...]) -> list[Path]:
+    """Files, and the audio files in folders (not searched recursively); each file once."""
+    from .output import _real, name_key
+
     files: list[Path] = []
+    seen: set[str] = set()
     for p in paths:
-        if p.is_dir():
-            files += sorted(q for q in p.iterdir() if q.suffix.lower() in AUDIO_SUFFIXES and not q.name.startswith("."))
-        else:
-            files.append(p)
+        found = (sorted(q for q in p.iterdir() if q.suffix.lower() in AUDIO_SUFFIXES and not q.name.startswith("."))
+                 if p.is_dir() else [p])
+        for q in found:
+            key = name_key(_real(q))
+            if key not in seen:
+                seen.add(key)
+                files.append(q)
     return files
 
 
@@ -34,30 +39,52 @@ def main() -> None:
     """FinalPassAudioBook: local, offline QC for audiobook chapters."""
 
 
-def _key(p: Path) -> str:
-    """How the file system compares names: APFS ignores case and Unicode normalisation."""
-    return unicodedata.normalize("NFC", str(p)).casefold()
+def _csv_targets(files: list[Path], csv_dir: Path | None, reserved: tuple[Path, ...] = ()) -> list[Path]:
+    """Where each file's CSV goes: beside the WAV, or into csv_dir. A name already taken in this run
+    (or by the run report), held by something other than this tool's report for that same WAV, or
+    that another audio file in the folder would use as its own, gets " (2)", " (3)", … — nothing is
+    replaced but our own report for the same WAV."""
+    from .output import _real, csv_name, name_key, replaceable
 
+    def audio_named(folder: Path, stem: str) -> bool:
+        return any((folder / f"{stem}{s}").exists() for s in (*AUDIO_SUFFIXES, *(x.upper() for x in AUDIO_SUFFIXES)))
 
-def _csv_targets(files: list[Path], csv_dir: Path | None) -> list[Path]:
-    """Where each file's CSV goes: beside the WAV, or into csv_dir. A name already taken in this run,
-    or held by a CSV this tool did not write, gets " (2)", " (3)", … — nothing is replaced but our own."""
-    from .output import csv_name, is_ours
-
-    out, seen = [], set()
+    out, seen = [], {name_key(_real(p)) for p in reserved}
     for f in files:
         first = (csv_dir or f.parent) / csv_name(f)
         target, k = first, 2
-        while _key(target) in seen or (target.exists() and not is_ours(target)):
+        while name_key(_real(target)) in seen or not replaceable(target, f):
             target = first.with_name(f"{first.stem} ({k}){first.suffix}")
             k += 1
-        seen.add(_key(target))
+            while audio_named(target.parent, target.stem):
+                target = first.with_name(f"{first.stem} ({k}){first.suffix}")
+                k += 1
+        seen.add(name_key(_real(target)))
         out.append(target)
     return out
 
 
+def _usable_out_dir(out_dir: Path) -> str | None:
+    """Why the run report cannot go into `out_dir` (checked before the analysis), or None."""
+    import tempfile
+
+    from .output import run_report_clashes
+
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=out_dir):
+            pass
+    except OSError as exc:
+        return f"cannot write the run report into {out_dir}: {exc}"
+    clash = run_report_clashes(out_dir)
+    if clash:
+        return (f"{out_dir} holds {', '.join(p.name for p in clash)}, which this tool did not write; "
+                "choose another --out folder")
+    return None
+
+
 @main.command("check")
-@click.argument("paths", nargs=-1, required=True, type=click.Path(path_type=Path))
+@click.argument("paths", nargs=-1, required=True, type=click.Path(readable=False, path_type=Path))
 @click.option("--rules", "rules_name", type=click.Choice(sorted(RULE_SETS)), default="standard", show_default=True,
               help="Pause rule set used to guess what each pause is.")
 @click.option("--out", "out_dir", type=click.Path(file_okay=False, path_type=Path), default=None,
@@ -78,7 +105,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     import json
 
     from .model import installed
-    from .output import file_csv, tally, write
+    from .output import RUN_FILES, file_csv, tally, write
     from .run import STAGES, RunOptions, run
 
     files = _expand(paths)
@@ -88,7 +115,11 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     per_file = csv_per_file or csv_dir is not None
     if out_dir is None and not per_file:
         out_dir = Path("./fpab-report")
-    targets = _csv_targets(files, csv_dir) if per_file else []
+    if out_dir is not None and (why := _usable_out_dir(out_dir)):
+        err.print(f"[red]error:[/red] {escape(why)}", soft_wrap=True)
+        sys.exit(2)
+    reserved = tuple(out_dir / n for n in RUN_FILES) if out_dir is not None else ()
+    targets = _csv_targets(files, csv_dir, reserved) if per_file else []
     opts = RunOptions(rules=RULE_SETS[rules_name], truncation=not no_truncation)
     jsonl = progress_mode == "jsonl"
     say = err if jsonl else out
@@ -100,18 +131,24 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     from datetime import datetime
 
     from . import __version__
-    model_on = opts.truncation and installed()
     csv_context = {"version": __version__, "rules": rules_name,
-                   "chopped-word check": "on" if model_on else ("off (model not installed)" if opts.truncation else "off"),
+                   "chopped-word check": "off" if not opts.truncation else "off (model not installed)",
                    "analysed": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    failed_csv: list[int] = []
+
+    def model_loaded(ok: bool) -> None:     # what every CSV says: whether the model really ran
+        if opts.truncation:
+            csv_context["chopped-word check"] = "on" if ok else (
+                "off (model not installed)" if not installed() else "off (model could not be loaded; see notes)")
 
     def file_done(i: int, fr) -> None:
         csv_path = None
         if per_file and fr.sample_rate:
             try:
                 csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
-            except OSError as exc:          # an unwritable CSV is a note on this file, not the end of the run
+            except Exception as exc:        # an unwritable CSV is a note on this file, not the end of the run
                 fr.notes.append(f"could not write the CSV: {exc}")
+                failed_csv.append(i)
         if jsonl:
             emit(event="file_done", index=i, path=fr.path, csv=csv_path, notes=fr.notes,
                  **{f"sev{s}": sum(f.severity == s for f in fr.findings) for s in (3, 2, 1)})
@@ -124,23 +161,33 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                      stage=lambda i, name: emit(event="stage", index=i, stage=name,
                                                 step=stages.index(name) if name in stages else -1,
                                                 steps=len(stages)),
-                     file_done=file_done)
+                     file_done=file_done, model_loaded=model_loaded)
     else:
         with err.status("Checking...") as status:
             report = run(files, opts, progress=lambda i, n, p: status.update(f"Checking {i + 1}/{n}: {p.name}"),
-                         file_done=file_done)
-    written = write(report, out_dir, min_sev) if out_dir is not None else []
+                         file_done=file_done, model_loaded=model_loaded)
+    written, report_error = [], None
+    if out_dir is not None:
+        try:
+            written = write(report, out_dir, min_sev)
+        except Exception as exc:            # the files are analysed: still print what was found
+            report_error = f"could not write the run report into {out_dir}: {exc}"
     for note in report.notes:
         say.print(f"[dim]note: {escape(note)}[/dim]")
     for fr in report.files:
         worst = max((f.severity for f in fr.findings), default=0)
-        colour = {3: "red", 2: "yellow", 1: "cyan"}.get(worst, "green")
+        colour = "red" if not fr.sample_rate else {3: "red", 2: "yellow", 1: "cyan"}.get(worst, "green")
         say.print(f"[{colour}]{escape(fr.file)}[/{colour}]  {tally(fr.findings)}"
                   + "".join(f"  [dim]({escape(n)})[/dim]" for n in fr.notes))
     say.print(f"network attempts: {report.network_attempts}")
-    say.print(escape("\n".join([f"Wrote {p}" for p in written] + [f"Wrote {p}" for p in written_csv.values()])))
+    for p in [*written, *written_csv.values()]:
+        say.print(escape(f"Wrote {p}"), soft_wrap=True)
+    if report_error:
+        err.print(f"[red]error:[/red] {escape(report_error)}", soft_wrap=True)
     if jsonl:
         emit(event="done", network_attempts=report.network_attempts, notes=report.notes)
+    elif report_error or failed_csv or any(not fr.sample_rate for fr in report.files):
+        sys.exit(1)                         # something was skipped or not written: say so to scripts
 
 
 @main.command("setup-model")

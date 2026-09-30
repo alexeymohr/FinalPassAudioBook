@@ -19,6 +19,9 @@ about half at -30 (the rest sit where the voice's own waveform steps as sharply)
 The shipped code on two chapters: 40/40 planted in pauses (-40 dBFS), 23/40 inside
 speech (-30 dBFS), nothing else listed. Whole title (41 files): none found. No
 real example has been heard yet.
+
+The step into and out of a dropout, or into the digital black at a clip end, is
+that event's own edge: a tick within 3 ms of one is not listed again (run.py).
 """
 from __future__ import annotations
 

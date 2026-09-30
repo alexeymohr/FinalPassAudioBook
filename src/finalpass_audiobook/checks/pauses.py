@@ -21,18 +21,24 @@ def pause_map(ch: Chapter, act: Activity, rules: RuleSet) -> list[Pause]:
                       duration_ms=int(round(n * 1000 / ch.sr)), kind="head",
                       guess="no narration found")]
 
+    def ms(s: int, e: int) -> int:
+        return int(round((e - s) * 1000 / ch.sr))
+
+    def shown_s(s: int, e: int) -> float:   # the length as the map prints it (0.01 s): the guess reads that
+        return round(ms(s, e) / 1000, 2)
+
     def add(s: int, e: int, kind: str, guess: str) -> None:
         out.append(Pause(start_sample=s, end_sample=e, start_time=ch.clock(s),
-                         duration_ms=int(round((e - s) * 1000 / ch.sr)), kind=kind, guess=guess))
+                         duration_ms=ms(s, e), kind=kind, guess=guess))
 
-    head_s = act.first_sound / ch.sr
+    head_s = shown_s(0, act.first_sound)
     add(0, act.first_sound, "head", head_or_tail_note(head_s, rules.chapter_head_s, "chapter start"))
     heading_seen = False
     for s, e in act.pauses:
-        guess = guess_internal((e - s) / ch.sr, s / ch.sr, rules, heading_seen)
+        guess = guess_internal(shown_s(s, e), s / ch.sr, rules, heading_seen)
         heading_seen = heading_seen or guess.startswith("after chapter heading")
         add(s, e, "internal", guess)
-    tail_s = (n - act.last_sound) / ch.sr
+    tail_s = shown_s(act.last_sound, n)
     add(act.last_sound, n, "tail", head_or_tail_note(tail_s, rules.chapter_tail_s, "chapter end"))
     return out
 

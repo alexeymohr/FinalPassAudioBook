@@ -17,6 +17,10 @@ Severity 3: in a pause QC calls it. Evidence (one title, 12 chapters): the
 operator heard 64 candidates from looser rules and confirmed 2 ticks; this rule
 lists exactly those 2 and nothing else in the 12 chapters. The limits were set on
 the same chapters, so they need a second title to confirm them.
+
+The same rule covers the room tone before the first word and after the last one
+(operator: as audible there as between words), where only the word side needs the
+100 ms clearance.
 """
 from __future__ import annotations
 
@@ -89,9 +93,17 @@ def rise_db(x: np.ndarray, sr: int, t: ClickTunables = ClickTunables()) -> tuple
 
 
 def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTunables(),
-                   rise: tuple[np.ndarray, int, int] | None = None) -> list[Finding]:
-    """Clicks inside pauses (word to word), clear of words and breaths. `rise`: rise_db(), if computed."""
-    if not pauses:
+                   rise: tuple[np.ndarray, int, int] | None = None,
+                   first_sound: int | None = None, last_sound: int | None = None) -> list[Finding]:
+    """Clicks in the silence: inside pauses (word to word), and in the room tone before the first
+    word and after the last one (`first_sound`, `last_sound`), clear of words and breaths.
+    `rise`: rise_db(), if computed."""
+    # (start, end, a word on the left, a word on the right, text)
+    regions = [(a, b, True, True, "click in a pause") for a, b in pauses]
+    if first_sound is not None and last_sound is not None:
+        regions = ([(0, first_sound, False, True, "click before the first word")] + regions
+                   + [(last_sound, len(ch.x), True, False, "click after the last word")])
+    if not regions:
         return []
     rise, n, hop = rise if rise is not None else rise_db(ch.x, ch.sr, t)
     if rise.size == 0:
@@ -100,7 +112,7 @@ def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTu
     near = int(round(t.one_per_ms * sr / 1000.0 / hop))
     peaks = np.flatnonzero((rise >= t.min_rise_db) & (rise == maximum_filter1d(rise, size=2 * near + 1, mode="nearest")))
     clear = int(t.clear_ms * sr / 1000)
-    starts = np.array([a for a, _ in pauses])
+    starts = np.array([r[0] for r in regions])
     spans = sorted(breath_spans)
     k2 = int(0.002 * sr)
     out: list[Finding] = []
@@ -109,8 +121,8 @@ def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTu
         i = int(np.searchsorted(starts, s, side="right")) - 1
         if i < 0:
             continue
-        a, b = pauses[i]
-        if not (a + clear <= s < b - clear):
+        a, b, word_left, word_right, text = regions[i]
+        if not (a + (clear if word_left else 0) <= s < b - (clear if word_right else 0)):
             continue
         if any(bs - clear <= s < be + clear for bs, be in spans):
             continue
@@ -121,8 +133,9 @@ def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTu
         at = max(0, s - k2) + int(np.argmax(np.abs(seg)))
         out.append(Finding(
             file=ch.name, check="clicks", start_sample=at, end_sample=at + 1, start_time=ch.clock(at),
-            end_time=ch.clock(at + 1), severity=CLICK_SEVERITY, problem="click in a pause",
+            end_time=ch.clock(at + 1), severity=CLICK_SEVERITY, problem=text,
             measures={"peak_dbfs": round(peak, 1), "rise_db": round(float(rise[f]), 1),
-                      "ms_after_word": round((s - a) * 1000 / sr), "ms_before_word": round((b - s) * 1000 / sr)},
+                      "ms_after_word": round((s - a) * 1000 / sr) if word_left else "",
+                      "ms_before_word": round((b - s) * 1000 / sr) if word_right else ""},
         ))
     return out

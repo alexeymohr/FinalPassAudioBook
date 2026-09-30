@@ -34,9 +34,12 @@ def to_mono(audio: AudioFile) -> tuple[np.ndarray, list[str]]:
         raise ChapterError(f"{audio.path.name}: empty file (no samples)")
     if data.shape[1] == 1:
         return data[:, 0], []
-    finite = np.nan_to_num(data)
-    if float(np.max(np.abs(finite - finite[:, :1]))) <= DUAL_MONO_TOLERANCE:
-        return data[:, 0], [f"{data.shape[1]} identical channels: analysed the first"]
+    ok = np.all(np.isfinite(data), axis=1)          # a NaN in one channel is corruption, not a difference
+    diff = np.abs(data[ok] - data[ok][:, :1])
+    if not diff.size or float(np.max(diff)) <= DUAL_MONO_TOLERANCE:
+        x = data[:, 0].copy()
+        x[~ok] = np.nan                                  # reported as invalid samples, whichever channel
+        return x, [f"{data.shape[1]} identical channels: analysed the first"]
     raise ChapterError(f"{audio.path.name}: needs mono narration (got {data.shape[1]} channels that differ)")
 
 

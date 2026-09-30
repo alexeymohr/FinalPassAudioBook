@@ -202,16 +202,23 @@ def test_min_sev_filters_the_lists_but_json_keeps_everything(tmp_path: Path) -> 
 
 
 def test_cli_min_sev_option(tmp_path: Path) -> None:
-    x = np.concatenate([room(1.0), phrase(4), room(2.5)])
+    """A severity-1 plosive pop and a severity-3 digital tick: --min-sev 3 lists only the tick."""
+    from test_noise_dropouts_plosives import _before_word, _thump
+    x, word = _before_word(_thump(0.05))
+    x[word - int(0.5 * SR)] += 10 ** (-30 / 20)                    # a one-sample spike in the pause
     sf.write(str(tmp_path / "ch.wav"), x, SR, subtype="PCM_24")
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--min-sev", "3", "--out", str(tmp_path / "o"),
                                   str(tmp_path / "ch.wav")])
     assert r.exit_code == 0, r.output
     assert "Listing severity 3 and above only." in (tmp_path / "o" / "issues.txt").read_text()
+    rows = (tmp_path / "o" / "issues.csv").read_text(encoding="utf-8-sig").splitlines()[1:]
+    assert [r.split(",")[5] for r in rows] == ["ticks"]
+    everything = json.loads((tmp_path / "o" / "report.json").read_text())["files"][0]["findings"]
+    assert sorted((f["check"], f["severity"]) for f in everything) == [("plosive", 1), ("ticks", 3)]
     assert CliRunner().invoke(main, ["check", "--min-sev", "4", str(tmp_path / "ch.wav")]).exit_code != 0
 
 
-# --- hum heard in the pauses (PLAN §8) --------------------------------------
+# --- hum heard in the pauses (PLAN §3.3) --------------------------------------
 
 
 def _low_speech(seconds: float) -> np.ndarray:

@@ -72,8 +72,11 @@ def install_from_file(src: Path) -> Path:
     model_dir().mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=model_dir(), delete=False) as fh:
         tmp = Path(fh.name)
-    shutil.copyfile(src, tmp)
-    return _place(tmp)
+    try:
+        shutil.copyfile(src, tmp)
+        return _place(tmp)
+    finally:
+        tmp.unlink(missing_ok=True)                     # moved into place already, or a failed copy
 
 
 def download() -> Path:
@@ -106,7 +109,13 @@ def load():
     if not installed():
         raise ModelError("model weights not installed — run `fpab setup-model`")
     path = weights_path()
-    raw = path.read_bytes()
+    try:
+        size = path.stat().st_size                  # never read an unexpected file into memory
+        if size != WEIGHTS_BYTES:
+            raise ModelError(f"{path}: {size} bytes, expected {WEIGHTS_BYTES}")
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise ModelError(f"{path}: cannot be read ({exc})") from exc
     if len(raw) != WEIGHTS_BYTES:
         raise ModelError(f"{path}: {len(raw)} bytes, expected {WEIGHTS_BYTES}")
     digest = hashlib.sha256(raw).hexdigest()

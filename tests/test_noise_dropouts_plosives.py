@@ -153,8 +153,8 @@ def test_plosive_severity_follows_its_level(amp: float, severity: int | None) ->
     found = plosive_findings(chapter(x))
     assert [f.severity for f in found] == ([severity] if severity else [])
     for f in found:
-        lv = f.measures["low_dbfs"]
-        assert f.severity == (3 if lv >= -26 else 2 if lv >= -34 else 1)
+        lv = round(f.measures["low_dbfs"])                  # graded on the whole dB the text shows
+        assert f"{lv} dBFS" in f.problem and f.severity == (3 if lv >= -26 else 2 if lv >= -34 else 1)
 
 
 def test_a_normal_plosive_onset_is_not_a_pop() -> None:
@@ -180,7 +180,9 @@ def test_a_pop_that_is_part_of_a_mouth_click_inhale_is_left_to_it() -> None:
     x, word = _before_word(_thump(0.2))
     breath = (word - int(0.5 * SR), word - int(0.2 * SR))      # the pop falls within 200 ms after it
     assert plosive_findings(chapter(x), (breath,)) == []
-    assert len(plosive_findings(chapter(x))) == 1
+    (f,) = plosive_findings(chapter(x))
+    inside = (f.start_sample + (f.end_sample - f.start_sample) // 2, word)   # the breath begins inside the pop
+    assert plosive_findings(chapter(x), (inside,)) == []
 
 
 # --- added after the audit ----------------------------------------------------------------
@@ -234,3 +236,30 @@ def test_noise_in_a_file_without_speech_says_so() -> None:
     x = RNG.standard_normal(SR * 10) * 10 ** (-40 / 20)
     (f,) = noise_findings(chapter(x))[0]
     assert "no narration in this file" in f.problem and f.severity == 3
+
+
+def _at_rate(x: np.ndarray, sr: int):
+    from pathlib import Path
+    from finalpass.audio_io import AudioFile
+    from finalpass_audiobook.chapter import Chapter
+    audio = AudioFile(path=Path("c.wav"), data=x[:, None], sample_rate=sr, bit_depth=24, channel_count=1,
+                      duration_seconds=len(x) / sr)
+    return Chapter(path=Path("c.wav"), audio=audio, x=x, sr=sr)
+
+
+@pytest.mark.parametrize("zeros, listed", [(12, False), (22, True)])
+def test_the_dropout_zero_count_scales_with_the_rate(zeros: int, listed: bool) -> None:
+    """At 96 kHz ten samples at 44.1 kHz are 22: natural zero crossings there leave more exact zeros."""
+    sr = 96000
+    t = np.arange(int(0.5 * sr)) / sr
+    tone = np.sqrt(2) * 10 ** (-20 / 20) * np.sin(2 * np.pi * 1000.0 * t)
+    x = np.concatenate([tone, np.zeros(zeros), tone])
+    found = [f for f in dropout_findings(_at_rate(x, sr)) if abs(f.start_sample - len(tone)) < 5]
+    assert len(found) == int(listed)
+
+
+def test_the_noise_floor_keeps_time_at_22050_hz() -> None:
+    from finalpass_audiobook.checks.noise import floor_track
+    _, hop_s = floor_track(np.full(22050 * 3, 1e-3), 22050)
+    assert hop_s == 220 / 22050                                   # 10 ms is 220.5 samples there
+    assert floor_track(np.full(44100 * 3, 1e-3), 44100)[1] == 0.01

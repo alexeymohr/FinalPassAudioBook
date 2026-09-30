@@ -8,13 +8,6 @@ from finalpass_audiobook.checks.ticks import tick_findings
 from synth import RNG, SR, chapter, phrase, room
 
 
-@pytest.fixture(autouse=True)
-def _leave_shared_noise_alone():
-    state = RNG.bit_generator.state
-    yield
-    RNG.bit_generator.state = state
-
-
 def _band_limited(x: np.ndarray, sr: int = SR) -> np.ndarray:
     """Like the rendered narration: nothing above about 16 kHz (a brick wall at 15.5 kHz)."""
     spec = np.fft.rfft(x)
@@ -108,3 +101,17 @@ def test_a_digital_tick_in_a_pause_is_listed_once(tmp_path) -> None:
     sf.write(p, x, SR, subtype="PCM_24")
     found = [f for f in analyze_file(p, RunOptions(truncation=False)).findings if f.check in ("ticks", "clicks")]
     assert [f.check for f in found] == ["ticks"]
+
+
+def test_a_dropout_is_listed_once_not_again_as_ticks_at_its_edges(tmp_path) -> None:        # noqa: ANN001
+    """The step into and out of a hole is the dropout's own edge (the raw tick check does fire there)."""
+    import soundfile as sf
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    x = np.concatenate([room(1.0), phrase(4), room(1.0), phrase(4), room(1.0)])
+    at = SR + int(0.1 * SR)                                          # inside the first word
+    x[at:at + int(0.012 * SR)] = 0.0
+    assert any(abs(f.start_sample - at) < 5 for f in tick_findings(chapter(x)))
+    p = tmp_path / "c.wav"
+    sf.write(p, x, SR, subtype="PCM_24")
+    near = [f.check for f in analyze_file(p, RunOptions(truncation=False)).findings if abs(f.start_sample - at) < 0.05 * SR]
+    assert near == ["dropout"]

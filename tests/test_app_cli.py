@@ -16,9 +16,12 @@ from report_csv import read_report as _report
 from synth import SR, phrase, room
 
 
-def _wav(path: Path) -> Path:
+def _wav(path: Path, spike: bool = False) -> Path:
+    """Two phrases; with `spike`, a one-sample digital tick in the pause between them (severity 3)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     x = np.concatenate([room(1.2), phrase(4), room(0.9), phrase(3), room(3.0)])
+    if spike:
+        x[int(1.2 * SR) + len(phrase(4)) + int(0.45 * SR)] += 10 ** (-30 / 20)
     sf.write(str(path), x, SR, subtype="PCM_24")
     return path
 
@@ -54,19 +57,19 @@ def test_one_csv_beside_each_wav_with_progress_lines(tmp_path: Path, monkeypatch
     assert summary["problem events"].startswith(f"{len(problems)} ") and "× sev 3" in summary["problem events"]
     assert summary["informational events"].endswith("pause rows off")
     assert info[-1]["event"].startswith("pause map not included")
-    assert all(r["event"] == "quiet breath" and r["severity"] == "" for r in info[:-1])
     assert summary["breaths"].split()[0].isdigit() and summary["breaths"].endswith(" quiet")
     assert summary["chopped-word check"] == "off" and summary["rules"] == "standard"
     assert not (tmp_path / "fpab-report").exists()                         # no run report unless asked
 
 
 def test_pause_rows_are_added_on_request_in_time_order(tmp_path: Path) -> None:
-    a = _wav(tmp_path / "ch01.wav")
+    a = _wav(tmp_path / "ch01.wav", spike=True)
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", "--with-pauses", str(a)])
     assert r.exit_code == 0, r.output
     summary, problems, info = _report(a.with_suffix(".csv"))
+    assert [p["check"] for p in problems] == ["ticks"]
     pauses = [r for r in info if r["check"] == "pause"]
-    assert pauses and all(r["check"] in ("pause", "breaths") for r in info)
+    assert len(pauses) >= 3 and all(r["check"] in ("pause", "breaths") for r in info)
     assert all(r["severity"] == "" and r["event"].startswith("pause ") for r in pauses)
     assert all(r["severity"] in ("1", "2", "3") for r in problems)                 # problems first, then the rest
     assert any("chapter start" in r["event"] for r in pauses)
@@ -102,3 +105,23 @@ def test_our_old_and_new_csvs_are_recognised_and_someone_elses_is_not(tmp_path: 
     assert r.exit_code == 0, r.output
     assert sorted(p.name for p in tmp_path.glob("ch01*.csv")) == ["ch01.csv"]
     assert _report(a.with_suffix(".csv"))[0]["file"] == "ch01.wav"
+
+
+def test_problems_and_informational_events_never_mix(tmp_path: Path) -> None:
+    """A severity-2 finding goes to PROBLEM EVENTS; a severity-0 quiet breath only to INFORMATIONAL."""
+    from finalpass_audiobook.findings import FileResult, Finding
+    from finalpass_audiobook.output import file_csv
+
+    def ev(sev: int, start: int, text: str) -> Finding:
+        return Finding(file="c.wav", check="breaths", start_sample=start, end_sample=start + 100,
+                       start_time=f"0:00:0{start // 1000}.000", end_time=f"0:00:0{start // 1000}.100",
+                       severity=sev, problem=text, measures={"loudness_db": -30.0})
+    fr = FileResult(file="c.wav", path=str(tmp_path / "c.wav"), sample_rate=SR, duration_seconds=10.0,
+                    narration_dbfs=-19.0, noise_floor_dbfs=-70.0, findings=[ev(2, 3000, "loud breath")],
+                    informational=[ev(0, 1000, "quiet breath"), ev(0, 5000, "quiet breath")], pauses=[])
+    summary, problems, info = _report(file_csv(fr, tmp_path / "c.csv"))
+    assert [(p["event"], p["severity"]) for p in problems] == [("loud breath", "2")]
+    assert [(i["event"], i["severity"]) for i in info[:-1]] == [("quiet breath", ""), ("quiet breath", "")]
+    assert summary["problem events"].startswith("1 ") and summary["informational events"].startswith("2 ")
+    raw = (tmp_path / "c.csv").read_bytes().decode("utf-8-sig")              # spacer rows exactly as written
+    assert "\r\n,,,,,,\r\nPROBLEM EVENTS" in raw and "\r\n,,,,,,\r\n,,,,,,\r\nINFORMATIONAL EVENTS" in raw

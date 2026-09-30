@@ -143,17 +143,18 @@ def breath_findings(ch: Chapter, tunables: BreathTunables = BreathTunables(),
     for e in result.breaths:
         parts: list[tuple[int, str]] = []
         start = e.start_sample
-        loud = breath_loudness_severity(e.noticeability_db, sev)
-        measures: dict = {"loudness_db": e.noticeability_db, "duration_ms": e.duration_ms,
+        loudness = round(float(e.noticeability_db), 1)        # graded on the value the report shows
+        loud = breath_loudness_severity(loudness, sev)
+        measures: dict = {"loudness_db": loudness, "duration_ms": e.duration_ms,
                           "peak_db_vs_narration": e.peak_db, "mouth_click": "no"}
         if narration_ok and r.size:
             at, sharp = _click_near(r, n, hop, ch.sr, e.start_sample, sev)
             if e.t_inhale or sharp >= sev.click_min_rise_db:
                 quiet = silence_before(ch, at, sev)
-                level = click_level(ch, at)
+                level = round(click_level(ch, at), 1)
                 k = mouth_click_severity(quiet, level, sev)
                 measures.update({"click_rise_db": round(sharp, 1), "ms_since_word": quiet,
-                                 "click_db_vs_narration": round(level, 1)})
+                                 "click_db_vs_narration": level})
                 if k:
                     parts.append((k, MOUTH_CLICK_TEXT[k]))
                     measures["mouth_click"] = "yes"

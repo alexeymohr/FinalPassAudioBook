@@ -4,17 +4,25 @@ Once client audio is opened there must be no downloading, update checking,
 telemetry or remote inference. While a guard is active this refuses — loopback
 included — and counts:
 
-* every socket connect, send (TCP or UDP), bind and name lookup, including the
-  low-level `_socket` module and anything else that raises Python's audit events
-  (`sys.addaudithook`, which fires inside the interpreter's C code);
+* creating a socket, and every socket connect, sendto/sendmsg, bind and name
+  lookup, including the low-level `_socket` module and anything else that raises
+  Python's audit events (`sys.addaudithook`, which fires inside the interpreter's
+  C code);
 * starting another process (subprocess, os.system/exec/spawn/fork), since a child
   process would run without the guard; multiprocessing's "spawn" start method
   raises no audit event, so its launcher is blocked directly;
-* looking up C network functions through ctypes (connect, sendto, getaddrinfo…).
+* reaching C network or process functions through ctypes: loading a network
+  library (libcurl, OpenSSL, CFNetwork…) or looking up connect, send, system,
+  fork, exec…, whichever lookup call is used.
 
-Every report records the count, which must be 0. The macOS app adds the OS
-sandbox (no network entitlement) on top. An audit hook cannot be removed, so the
-hook is installed once and does nothing while no guard is active.
+It is a guard inside Python, not a sandbox: it sees what goes through the
+interpreter. Native code that calls the operating system directly, or a socket
+opened before the guard (a run opens none), is beyond it — and code in the same
+process could switch it off. The macOS app's OS sandbox (no network entitlement)
+is the hard boundary; the command line can be run under an OS sandbox too (see
+the README). Every report records the count, which must be 0. An audit hook
+cannot be removed, so the hook is installed once and does nothing while no guard
+is active.
 """
 from __future__ import annotations
 
@@ -32,13 +40,18 @@ class NetworkAccessDenied(RuntimeError):
     """Raised when guarded code attempts network access or starts a process."""
 
 
-_NET_EVENTS = {"socket.connect", "socket.sendto", "socket.sendmsg", "socket.bind", "socket.getaddrinfo",
-               "socket.gethostbyname", "socket.gethostbyaddr", "socket.getnameinfo"}
+_NET_EVENTS = {"socket.__new__", "socket.connect", "socket.sendto", "socket.sendmsg", "socket.bind",
+               "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr", "socket.getnameinfo"}
 _PROCESS_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.posix_spawn", "os.fork",
                    "os.forkpty", "pty.spawn"}
 _NET_SYMBOLS = {"connect", "connectx", "send", "sendto", "sendmsg", "sendmsg_x", "socket", "bind",
                 "getaddrinfo", "gethostbyname", "gethostbyname2", "gethostbyaddr", "getnameinfo",
-                "res_query", "res_search", "res_send"}
+                "res_query", "res_search", "res_send",
+                # starting a process from C: as good as a way out
+                "system", "popen", "fork", "vfork", "execv", "execve", "execvp", "execvpe", "execl", "execle",
+                "execlp", "posix_spawn", "posix_spawnp"}
+_NET_SYMBOL_PREFIXES = ("curl_", "SSL_", "nw_", "CFSocket", "CFStream", "CFHost", "CFNetwork", "CFURL")
+_NET_LIBRARIES = ("curl", "libssl", "libcrypto", "cfnetwork", "network.framework", "libresolv")
 
 _lock = threading.Lock()
 _active: list["NetworkGuard"] = []
@@ -59,8 +72,12 @@ def _audit(event: str, args: tuple) -> None:
         return
     if event in _NET_EVENTS or event in _PROCESS_EVENTS:
         _refuse(f"{event} {args!r}"[:200])
-    if event == "ctypes.dlsym" and len(args) > 1 and str(args[1]) in _NET_SYMBOLS:
-        _refuse(f"ctypes symbol {args[1]}")
+    if event in ("ctypes.dlsym", "ctypes.dlsym/handle") and len(args) > 1:
+        name = str(args[1])
+        if name in _NET_SYMBOLS or name.startswith(_NET_SYMBOL_PREFIXES):
+            _refuse(f"ctypes symbol {name}")
+    if event == "ctypes.dlopen" and args and any(k in str(args[0]).lower() for k in _NET_LIBRARIES):
+        _refuse(f"ctypes library {args[0]}")
 
 
 def _blocked_fork_exec(*a, **k):            # noqa: ANN002, ANN003

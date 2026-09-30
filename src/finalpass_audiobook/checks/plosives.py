@@ -12,9 +12,10 @@ normal p/b burst is part of the word's own onset: its high end arrives with it. 
   above the high end at the pop, and reaches within 10 dB of that level 75-150 ms after it;
 * over before the word: the low band falls >= 30 dB between the pop and the word's onset.
 
-Severity by the pop's level below 100 Hz: 1 from -42 dBFS, 2 from -34, 3 from -26. A pop inside
-or just after a mouth-click inhale belongs to that breath (operator: the plosive is then a
-component of the T-inhale) and is not listed separately.
+Severity by the pop's level below 100 Hz, in the whole dB the text shows: 1 from -42 dBFS, 2
+from -34, 3 from -26. A pop overlapping a mouth-click inhale or within 200 ms after it belongs to
+that breath (operator: the plosive is then a component of the T-inhale) and is not listed
+separately.
 
 Evidence (one title): 12 QC-noted pops; on them this lists 10 (the other two: one inside a
 mouth-click inhale, one at -41 dBFS with little low-band dominance). A blind round of 32
@@ -112,14 +113,14 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
         if low[j] - float(low[j + 1:onset].min()) < t.min_fall_db:
             continue
         s, e = lo * n * q, (hi + 1) * n * q
-        if any(a <= s <= b + after for a, b in mouth_click_spans):
+        if any(s <= b + after and e >= a for a, b in mouth_click_spans):
             continue                  # part of a mouth-click inhale: the breath's entry covers it
-        level = round(float(low[j]), 1)
+        level = round(float(low[j]))          # graded on the whole-dB value the text shows
         out.append(Finding(
             file=ch.name, check="plosive", start_sample=s, end_sample=e, start_time=ch.clock(s), end_time=ch.clock(e),
             severity=ladder(level, (t.min_dbfs, t.sev2_dbfs, t.sev3_dbfs)),
-            problem=f"plosive pop before a word, {level:.0f} dBFS below 100 Hz",
-            measures={"low_dbfs": level, "low_over_high_db": round(float(low[j] - high_at), 1),
+            problem=f"plosive pop before a word, {level} dBFS below 100 Hz",
+            measures={"low_dbfs": round(float(low[j]), 1), "low_over_high_db": round(float(low[j] - high_at), 1),
                       "ms_to_word": int(round(to_word)), "width_ms": int(round((hi - lo + 1) * block_s * 1000))},
         ))
     return out

@@ -69,14 +69,97 @@ def test_weights_are_refused_unless_they_match(tmp_path: Path, monkeypatch: pyte
         model_mod.install_from_file(bad)
 
 
-def test_network_guard_refuses_connections() -> None:
-    with NetworkGuard() as g:
-        with pytest.raises(NetworkAccessDenied):
-            socket.create_connection(("127.0.0.1", 9))
-    assert g.attempts
+def _weights(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data: bytes) -> Path:
+    """`data` installed as the weights, with the expected size set to its length."""
+    monkeypatch.setenv("FPAB_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.setattr(model_mod, "WEIGHTS_BYTES", len(data))
+    w = model_mod.weights_path()
+    w.parent.mkdir(parents=True, exist_ok=True)
+    w.write_bytes(data)
+    return w
 
 
-def test_check_command_writes_everything_and_touches_no_network(tmp_path: Path) -> None:
+def test_weights_of_the_right_size_but_other_bytes_are_refused_at_load(tmp_path: Path,
+                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    _weights(tmp_path, monkeypatch, b"z" * 64)
+    with pytest.raises(model_mod.ModelError, match="SHA-256"):
+        model_mod.load()
+
+
+def test_unreadable_weights_are_a_model_error_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything")
+    w = _weights(tmp_path, monkeypatch, b"z" * 64)
+    w.chmod(0)
+    try:
+        with pytest.raises(model_mod.ModelError, match="cannot be read"):
+            model_mod.load()
+    finally:
+        w.chmod(0o644)
+
+
+def test_a_download_is_verified_before_it_is_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No network: the download is replaced by bytes in memory."""
+    import io
+    import urllib.request
+    monkeypatch.setenv("FPAB_MODEL_DIR", str(tmp_path / "models"))
+    monkeypatch.setattr(model_mod, "WEIGHTS_BYTES", 64)
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: io.BytesIO(b"y" * 64))
+    with pytest.raises(model_mod.ModelError, match="SHA-256"):
+        model_mod.download()
+    assert not model_mod.installed() and list(model_mod.model_dir().iterdir()) == []
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: io.BytesIO(b"y" * 65))
+    with pytest.raises(model_mod.ModelError, match="larger"):
+        model_mod.download()
+    assert list(model_mod.model_dir().iterdir()) == []
+    monkeypatch.setattr(model_mod, "WEIGHTS_SHA256", model_mod.hashlib.sha256(b"y" * 64).hexdigest())
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: io.BytesIO(b"y" * 64))
+    assert model_mod.download() == model_mod.weights_path() and model_mod.installed()
+
+
+def test_a_failed_install_leaves_no_temporary_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FPAB_MODEL_DIR", str(tmp_path / "models"))
+    src = tmp_path / "w.safetensors"
+    src.write_bytes(b"x" * 64)
+    monkeypatch.setattr(model_mod, "WEIGHTS_BYTES", 64)
+    monkeypatch.setattr(model_mod, "WEIGHTS_SHA256", model_mod.sha256(src))
+
+    def disk_full(*a, **k):        # noqa: ANN002, ANN003
+        raise OSError("No space left on device")
+    monkeypatch.setattr(model_mod.shutil, "copyfile", disk_full)
+    with pytest.raises(OSError):
+        model_mod.install_from_file(src)
+    assert list(model_mod.model_dir().iterdir()) == []
+
+
+def test_the_csv_says_the_check_was_off_when_the_model_did_not_load(tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    from report_csv import read_report
+    _weights(tmp_path, monkeypatch, b"not the model")
+    x = np.concatenate([room(1.0), phrase(3), room(2.5)])
+    wav = tmp_path / "ch.wav"
+    sf.write(str(wav), x, SR, subtype="PCM_24")
+    r = CliRunner().invoke(main, ["check", "--csv-per-file", str(wav)])
+    assert r.exit_code == 0, r.output
+    summary, _, _ = read_report(wav.with_suffix(".csv"))
+    assert summary["chopped-word check"] == "off (model could not be loaded; see notes)"
+
+
+def test_the_chopped_word_check_runs_end_to_end_at_a_clip_end(tmp_path: Path) -> None:
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    cut = phrase(3)[: -int(0.06 * SR)]                                   # ends mid-word, loud
+    x = np.concatenate([room(0.5), cut, np.zeros(int(0.2 * SR)), phrase(3), room(0.8)])
+    wav = tmp_path / "c.wav"
+    sf.write(str(wav), x, SR, subtype="PCM_24")
+    fr = analyze_file(wav, RunOptions(), model=_FakeModel([0.999]))
+    end = int(0.5 * SR) + len(cut)
+    assert fr.counts["phrase_ends_scored"] == 1
+    (f,) = [f for f in fr.findings if f.check == "truncation"]
+    assert f.problem == "word ends abruptly" and abs(f.start_sample - end) <= 2     # the first exact zero
+
+
+def test_check_command_writes_the_run_report(tmp_path: Path) -> None:
     x = np.concatenate([room(1.0), phrase(4), room(0.6), phrase(4), room(2.5)])
     sf.write(str(tmp_path / "ch01.wav"), x, SR, subtype="PCM_24")
     out = tmp_path / "out"

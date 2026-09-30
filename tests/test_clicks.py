@@ -9,15 +9,6 @@ from finalpass_audiobook.checks.clicks import click_findings
 from synth import RNG, SR, band_noise, chapter, phrase, room
 
 
-@pytest.fixture(autouse=True)
-def _leave_shared_noise_alone():
-    """These tests draw from synth's shared RNG; put its state back so tests in later files
-    see the same noise whether or not these ran."""
-    state = RNG.bit_generator.state
-    yield
-    RNG.bit_generator.state = state
-
-
 def _tick(peak_dbfs: float, sr: int = SR) -> np.ndarray:
     """A 3 ms decaying broadband tick."""
     n = int(0.003 * sr)
@@ -79,17 +70,50 @@ def test_a_sustained_hiss_in_a_pause_is_not_a_click() -> None:
     assert _clicks(x) == []
 
 
-def test_found_at_48k_too() -> None:
-    sr = 48000
+@pytest.mark.parametrize("sr", [48000, 96000])
+@pytest.mark.parametrize("after_word_ms, listed", [(700.0, True), (70.0, False)])
+def test_found_at_other_rates_too(sr: int, after_word_ms: float, listed: bool) -> None:
+    """Every limit in milliseconds scales with the rate (70 ms is inside the 100 ms clearance)."""
     x44, _ = _with(None, 0)
     t = np.arange(int(len(x44) * sr / SR)) / sr
     x = np.interp(t, np.arange(len(x44)) / SR, x44)
-    at = int((len(phrase(4)) / SR + 0.7) * sr)
+    ch0 = _at_rate(x, sr)
+    word_end = measure(ch0).pauses[0][0]
+    at = word_end + int(after_word_ms * sr / 1000)
     x[at:at + int(0.003 * sr)] += _tick(-35.0, sr)
+    ch = _at_rate(x, sr)
+    assert len(click_findings(ch, measure(ch).pauses, [])) == int(listed)
+
+
+def _at_rate(x: np.ndarray, sr: int):
     from pathlib import Path
     from finalpass.audio_io import AudioFile
     from finalpass_audiobook.chapter import Chapter
     audio = AudioFile(path=Path("c.wav"), data=x[:, None], sample_rate=sr, bit_depth=24, channel_count=1,
                       duration_seconds=len(x) / sr)
-    ch = Chapter(path=Path("c.wav"), audio=audio, x=x, sr=sr)
-    assert len(click_findings(ch, measure(ch).pauses, [])) == 1
+    return Chapter(path=Path("c.wav"), audio=audio, x=x, sr=sr)
+
+
+def test_clicks_in_the_head_and_tail_room_tone_are_found() -> None:
+    x = np.concatenate([room(1.2), phrase(4), room(1.0), phrase(3), room(1.5)])
+    head, tail = int(0.5 * SR), len(x) - int(0.7 * SR)
+    for at in (head, tail):
+        x[at:at + int(0.003 * SR)] += _tick(-35.0)
+    ch = chapter(x)
+    act = measure(ch)
+    found = click_findings(ch, act.pauses, [], first_sound=act.first_sound, last_sound=act.last_sound)
+    assert [f.problem for f in found] == ["click before the first word", "click after the last word"]
+    assert all(abs(f.start_sample - at) < 0.004 * SR for f, at in zip(found, (head, tail)))
+    assert found[0].measures["ms_after_word"] == "" and found[1].measures["ms_before_word"] == ""
+    assert click_findings(ch, act.pauses, []) == []                   # the pause between the phrases is clean
+
+
+def test_a_click_right_before_the_first_word_is_left_to_the_word() -> None:
+    x = np.concatenate([room(1.2), phrase(4), room(1.5)])
+    ch0 = chapter(x)
+    first = measure(ch0).first_sound
+    tick = _tick(-35.0)
+    x[first - int(0.05 * SR):first - int(0.05 * SR) + len(tick)] += tick     # 50 ms before the word
+    ch = chapter(x)
+    act = measure(ch)
+    assert click_findings(ch, act.pauses, [], first_sound=act.first_sound, last_sound=act.last_sound) == []

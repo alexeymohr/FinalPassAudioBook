@@ -30,7 +30,7 @@ def _check(*args: str):
     return CliRunner().invoke(main, ["check", "--no-truncation", "--progress", "jsonl", *args])
 
 
-def test_a_missing_file_and_an_unwritable_csv_are_skipped_not_fatal(tmp_path: Path) -> None:
+def test_a_missing_file_and_a_folder_named_like_the_csv_are_not_fatal(tmp_path: Path) -> None:
     a, b = _wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")
     out = tmp_path / "csvs"
     (out / "a.csv").mkdir(parents=True)                       # a folder where a.csv should go
@@ -38,7 +38,7 @@ def test_a_missing_file_and_an_unwritable_csv_are_skipped_not_fatal(tmp_path: Pa
     assert r.exit_code == 0, r.output
     done = [e for e in _events(r) if e["event"] == "file_done"]
     assert [e["csv"] is None for e in done] == [False, True, False]
-    assert any("could not write" in n for n in done[0]["notes"]) or done[0]["csv"].endswith("(2).csv")
+    assert done[0]["csv"].endswith("a (2).csv") and (out / "a.csv").is_dir()
     assert any("not found" in n for n in done[1]["notes"])
     assert _events(r)[-1]["event"] == "done"
 
@@ -104,12 +104,12 @@ def test_file_names_are_safe_in_spreadsheets_and_in_the_terminal(tmp_path: Path)
     assert ",=HYPERLINK" not in text and "\n=HYPERLINK" not in text
 
 
-def test_skipped_files_appear_in_issues_csv(tmp_path: Path) -> None:
+def test_skipped_files_appear_in_issues_csv_and_in_the_exit_code(tmp_path: Path) -> None:
     out = tmp_path / "rep"
     bad = tmp_path / "broken.wav"
     bad.write_bytes(b"not audio")
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--out", str(out), str(bad)])
-    assert r.exit_code == 0, r.output
+    assert r.exit_code == 1, r.output                       # the report is written; a script still learns of it
     rows = (out / "issues.csv").read_text(encoding="utf-8-sig").splitlines()
     assert len(rows) == 2 and rows[1].startswith("broken.wav") and "skipped" in rows[1]
 

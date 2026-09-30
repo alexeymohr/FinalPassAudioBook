@@ -70,15 +70,17 @@ class NoiseTunables:
 
 def floor_track(x: np.ndarray, sr: int, t: NoiseTunables = NoiseTunables(),
                 exclude: list[tuple[list[float], float, float]] | None = None) -> tuple[np.ndarray, float]:
-    """Broadband noise floor (dBFS) every HOP_S, and the hop in seconds.
+    """Broadband noise floor (dBFS) every hop (HOP_S, a whole number of samples), and that hop in
+    seconds — the exact one, so times stay right at any rate (at 22.05 kHz 10 ms is 220.5 samples).
 
     Each frame's DC is removed first (an offset would leak into the lowest band). A band's floor is
     its bias-corrected minimum, but never above its running mean: a steady tone's minimum already
     is its mean, and correcting it again would inflate it. `exclude` = (frequencies, start s, end s):
     bands holding a listed hum are left out while it sounds (the hum check reports it)."""
     n, hop = int(round(FRAME_S * sr)), int(round(HOP_S * sr))
+    hop_s = hop / sr
     if len(x) < n:
-        return np.array([]), HOP_S
+        return np.array([]), hop_s
     nfft = 1 << int(np.ceil(np.log2(2 * n)))
     w = np.hanning(n)
     f = np.fft.rfftfreq(nfft, 1.0 / sr)
@@ -94,7 +96,7 @@ def floor_track(x: np.ndarray, sr: int, t: NoiseTunables = NoiseTunables(),
         p = np.abs(np.fft.rfft(frames * w, nfft, axis=1)) ** 2 * scale
         bands[b0:b0 + len(p)] = np.stack([p[:, i].sum(axis=1) for i in idx], axis=1)
     smooth = uniform_filter1d(bands, SMOOTH_FRAMES, axis=0, mode="nearest")
-    size = max(1, int(round(t.min_window_s / HOP_S)))
+    size = max(1, int(round(t.min_window_s / hop_s)))
     minima = minimum_filter1d(smooth, size, axis=0, mode="nearest")
     bias = np.array([bias_for(i.size) for i in idx])
     floor = np.minimum(minima * bias, uniform_filter1d(smooth, size, axis=0, mode="nearest"))
@@ -104,10 +106,10 @@ def floor_track(x: np.ndarray, sr: int, t: NoiseTunables = NoiseTunables(),
     leak = 4.0 * sr / nfft
     for freqs, a_s, b_s in exclude or []:
         cols = [j for j, (lo, hi) in enumerate(kept_edges) if any(lo < fr + leak and fr - leak < hi for fr in freqs)]
-        r0, r1 = max(0, int(a_s / HOP_S)), min(len(floor), int(b_s / HOP_S) + 1)
+        r0, r1 = max(0, int(a_s / hop_s)), min(len(floor), int(b_s / hop_s) + 1)
         if cols and r1 > r0:
             floor[r0:r1, cols] = 0.0
-    return dbfs(floor.sum(axis=1)), HOP_S
+    return dbfs(floor.sum(axis=1)), hop_s
 
 
 def _stretches(above: np.ndarray, hop_s: float, t: NoiseTunables) -> list[tuple[int, int]]:
@@ -140,8 +142,8 @@ def noise_findings(ch: Chapter, t: NoiseTunables = NoiseTunables(),
     for a0, b0 in _stretches(above, hop_s, t):
         seg = track[a0:b0]
         a, b = max(0, a0 - half), min(len(track), b0 + half)
-        s = int(a * hop_s * ch.sr)
-        e = min(len(ch.x), int((b * hop_s + FRAME_S) * ch.sr))
+        e = min(len(ch.x), int(round((b * hop_s + FRAME_S) * ch.sr)))
+        s = min(int(round(a * hop_s * ch.sr)), e)
         level = round(float(np.median(seg)), 1)
         speech = ch.local_speech_dbfs(s, e) if np.isfinite(narration) else float("nan")
         if np.isfinite(speech):

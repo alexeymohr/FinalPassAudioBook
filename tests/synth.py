@@ -10,7 +10,8 @@ from scipy.signal import butter, sosfilt
 from finalpass_audiobook.chapter import Chapter
 
 SR = 44100
-RNG = np.random.default_rng(20260928)
+SEED = 20260928
+RNG = np.random.default_rng(SEED)          # reset before every test (conftest.py)
 
 
 def word(seconds: float, f0: float = 140.0, glide: float = 25.0) -> np.ndarray:

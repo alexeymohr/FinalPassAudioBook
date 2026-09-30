@@ -21,15 +21,15 @@ def test_hum_fading_up_under_speech_is_found() -> None:
     x = _speech(20.0)
     t = np.arange(len(x)) / SR
     ramp = np.clip((t - 4.0) / 8.0, 0, 1)                     # silent, then builds over 8 s
-    level = 10 ** ((-90 + 35 * ramp) / 20) * np.sqrt(2)       # -90 -> -55 dBFS RMS
+    level = 10 ** ((-90 + 32 * ramp) / 20) * np.sqrt(2)       # -90 -> -58 dBFS RMS: clear of the -55 line
     x = x + level * np.sin(2 * np.pi * 60.0 * t) * (t >= 4.0)
     found = hum_findings(chapter(x))
     assert len(found) == 1
     f = found[0]
-    assert f.severity == 1                                     # low-level (builds to -55, under the strong limit)
+    assert f.severity == 1                                     # low-level (builds to -58, under the strong limit)
     assert abs(f.measures["frequency_hz"] - 60.0) < 0.3
     assert "building" in f.problem
-    assert f.measures["level_end_dbfs"] > -60
+    assert f.measures["level_end_dbfs"] > -62
     assert 3.0 <= f.start_sample / SR <= 12.0
 
 
@@ -108,3 +108,31 @@ def test_a_steady_tone_is_one_finding_not_several() -> None:
     x = _speech(30.0)
     found = _hums(x + _tone(len(x), 998.0, -60.0))
     assert len(found) == 1 and found[0].end_sample / SR - found[0].start_sample / SR > 25.0
+
+
+def test_a_loud_hum_that_starts_and_stops_mid_chapter_is_a_hum() -> None:
+    """Loud enough to fill the pauses inside it; the pauses around it are clean."""
+    x = _speech(40.0)
+    t = np.arange(len(x)) / SR
+    x = x + ((t >= 15.0) & (t < 19.0)) * 10 ** (-45 / 20) * np.sqrt(2) * np.sin(2 * np.pi * 60.0 * t)
+    (f,) = hum_findings(chapter(x))
+    assert f.severity == 3 and "abruptly" in f.problem
+    assert 14.5 <= f.start_sample / SR <= 15.5 and 18.5 <= f.end_sample / SR <= 19.5
+
+
+def test_hum_severity_follows_the_level_its_text_shows() -> None:
+    import re
+    x = _speech(20.0)
+    t = np.arange(len(x)) / SR
+    x = x + 10 ** (-55.3 / 20) * np.sqrt(2) * np.sin(2 * np.pi * 60.0 * t)
+    (f,) = hum_findings(chapter(x))
+    shown = int(re.search(r"(-?\d+) dBFS", f.problem).group(1))
+    assert shown == -55 and f.severity == 2                           # "-55 dBFS" reads as strong
+
+
+def test_pieces_of_one_hum_join_whichever_way_their_frequencies_round() -> None:
+    from finalpass_audiobook.checks.hum import HumTunables, _join, _Track
+    for f1, f2 in ((60.28, 60.32), (60.32, 60.28)):
+        a = _Track(first=0, last=16, freqs=[f1] * 17, levels=[-60.0] * 17, proms=[20.0] * 17)
+        b = _Track(first=20, last=36, freqs=[f2] * 17, levels=[-60.0] * 17, proms=[20.0] * 17)
+        assert len(_join([a, b], HumTunables())) == 1
