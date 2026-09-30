@@ -82,6 +82,14 @@ xcrun actool --compile "$APP/Contents/Resources" --platform macosx --minimum-dep
 say "Python interpreter (copied from $PY_ROOT)"
 ditto "$PY_ROOT" "$ENGINE/python"
 PY="$ENGINE/python/bin/python3.12"
+# Nothing in the app may name this Mac's folders (checked before signing). The library's own name
+# pointed at the uv folder it was copied from: name it by its place in the app, and re-sign it at
+# once (arm64 code with a broken signature is not loaded).
+LIBPY="$ENGINE/python/lib/libpython3.12.dylib"
+[[ ! -L "$LIBPY" && "$(readlink -f "$LIBPY")" == "$ENGINE"/* ]] || die "unexpected libpython: $LIBPY"
+install_name_tool -id @rpath/libpython3.12.dylib "$LIBPY" 2>/dev/null || die "install_name_tool failed"
+codesign -s - -f "$LIBPY" 2>/dev/null || die "re-sign after install_name_tool failed"
+SHOWN="/Applications/FinalPass AudioBook.app/Contents/Resources/engine"
 
 say "Locked base dependencies (uv.lock hashes, published before $EXCLUDE_NEWER)"
 FP_REQ="$(uv export --project "$REPO" --frozen --no-dev --no-hashes --no-emit-project --no-header 2>/dev/null \
@@ -91,11 +99,22 @@ uv export --project "$REPO" --frozen --no-dev --no-emit-project --no-emit-packag
     -o "$STAGE/requirements.txt" >/dev/null
 uv pip install --python "$PY" --break-system-packages --no-deps --require-hashes \
     --exclude-newer "$EXCLUDE_NEWER" -r "$STAGE/requirements.txt"
-uv pip install --python "$PY" --break-system-packages --no-deps --exclude-newer "$EXCLUDE_NEWER" "$FP_REQ"
-uv pip install --python "$PY" --break-system-packages --no-deps --exclude-newer "$EXCLUDE_NEWER" "$REPO"
+# The two built from source get their build backend from hash-pinned build constraints.
+uv pip install --python "$PY" --break-system-packages --no-deps --exclude-newer "$EXCLUDE_NEWER" \
+    --build-constraints "$HERE/build-constraints.txt" "$FP_REQ"
+uv pip install --python "$PY" --break-system-packages --no-deps --exclude-newer "$EXCLUDE_NEWER" \
+    --build-constraints "$HERE/build-constraints.txt" "$REPO"
+# pip's record of where fpab was installed from names this Mac's folders; the app does not need it
+for d in "$ENGINE"/python/lib/python3.12/site-packages/finalpass_audiobook-*.dist-info; do
+    rm -f "$d/direct_url.json"
+    sed -i '' '/direct_url.json/d' "$d/RECORD"
+done
 
-say "Model weights"
-ditto "$MODEL_SRC" "$ENGINE/model/speech-truncation-12M"
+say "Model weights (the one verified file, nothing else from the cache)"
+WEIGHTS_REL="$("$REPO/.venv/bin/python" -I -c "from finalpass_audiobook import model; print(model.REVISION[:12])")/model.safetensors"
+[ -f "$MODEL_SRC/$WEIGHTS_REL" ] || die "model not installed ($MODEL_SRC/$WEIGHTS_REL): run 'fpab setup-model' first"
+mkdir -p "$(dirname "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL")"
+cp "$MODEL_SRC/$WEIGHTS_REL" "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL"
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "from finalpass_audiobook import model; model.load(); print('weights verified')"
 
 say "Trim what an analysis run never uses"
@@ -154,6 +173,12 @@ find "$ENGINE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 echo "error paths ok"
 
 say "Precompile what a run imports (one run on a synthetic WAV; the sandboxed engine never writes .pyc)"
+# The interpreter's build-time settings name the uv folder it came from (no run reads them).
+for f in "$ENGINE"/python/lib/python3.12/_sysconfigdata_*.py; do
+    PY_ROOT="$PY_ROOT" SHOWN="$SHOWN/python" "$REPO/.venv/bin/python" -I -c "
+import os, sys; p = sys.argv[1]; t = open(p, encoding='utf-8').read()
+open(p, 'w', encoding='utf-8').write(t.replace(os.environ['PY_ROOT'], os.environ['SHOWN']))" "$f"
+done
 WARM="$STAGE/warm"
 mkdir -p "$WARM"
 "$PY" -I -c "import sys, numpy as np, soundfile as sf
@@ -163,7 +188,22 @@ sf.write(sys.argv[1], x, sr, subtype='PCM_24')" "$WARM/warm.wav"
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" "${FPAB[@]}" check --csv-dir "$WARM/out" --with-pauses --progress jsonl \
     -- "$WARM/warm.wav" >/dev/null
 [ -f "$WARM/out/warm.csv" ] || die "warm-up run wrote no CSV"
+# Compiled files record where their source was: recompile each under the path it has in the app.
+"$PY" -I - "$ENGINE" "$SHOWN" <<'PYC'
+import os, py_compile, sys
+engine, shown = sys.argv[1], sys.argv[2]
+for root, _, files in os.walk(engine):
+    if os.path.basename(root) != "__pycache__":
+        continue
+    for f in files:
+        src = os.path.join(os.path.dirname(root), f.split(".cpython-")[0] + ".py")
+        if f.endswith(".pyc") and os.path.isfile(src):
+            py_compile.compile(src, cfile=os.path.join(root, f), dfile=os.path.join(shown, os.path.relpath(src, engine)),
+                               doraise=True)
+PYC
 echo "compiled modules: $(find "$ENGINE" -name '*.pyc' | wc -l | tr -d ' ')"
+leaked="$(grep -rl -e "$HOME" "$ENGINE" 2>/dev/null | head -5 || true)"   # grep finds none: exit 1
+[ -z "$leaked" ] || { echo "$leaked"; die "the app would carry this Mac's folder names"; }
 
 say "Guard: no link may lead outside the bundle or nowhere"
 leaks="$(find "$APP" -type l | while IFS= read -r l; do

@@ -11,8 +11,10 @@ then the informational events; a checkbox adds the pause map's rows.
   chopped-word model runs as numpy (no PyTorch), held to the audited torch code.
 - **Where CSVs go.** Next to each WAV as `<name>.csv` (macOS lets a sandboxed app
   create a same-name file beside one it was given), or into a folder you choose once.
-  A CSV the app did not write is never replaced: it asks once for that folder and
-  writes `<name> (2).csv`. A CSV that cannot be placed is kept and can be saved later.
+  A CSV is replaced only when it is this app's report for the same WAV (so two books'
+  "Chapter 01" never share one); otherwise it asks once for that folder and writes
+  `<name> (2).csv`. A CSV that cannot be placed is kept in the app until you save it
+  ("Save Unsaved CSVs…"); the app asks before Go, Remove, Clear or Quit discard it.
 
 ## Build
 
@@ -25,10 +27,12 @@ uv run fpab setup-model         # the model weights, verified
 macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 180 MB)
 ```
 
-The script installs exactly the versions in `uv.lock`, copies the real Python
-interpreter (never through a link), precompiles it, refuses to continue if any link
-points outside the bundle, and signs everything ad hoc for this Mac. Other Macs would
-need Developer ID signing and notarization, which it does not do.
+The script installs exactly the versions in `uv.lock` (and the hash-pinned build
+backends in `build-constraints.txt`), copies the real Python interpreter (never
+through a link), precompiles it, refuses to continue if any link points outside the
+bundle or any file names the building Mac's folders, and signs everything ad hoc for
+this Mac. Other Macs would need Developer ID signing and notarization, which it does
+not do.
 
 Scripted check (only in a build made with `macos/build_app.sh --test-hooks`; the normal
 build has no hook): runs, writes the CSVs, quits; result in the app's container at

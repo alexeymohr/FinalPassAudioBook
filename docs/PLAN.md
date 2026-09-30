@@ -1,8 +1,8 @@
 # FinalPassAudioBook — design and plan
 
-**Status (2026-09-29):** milestone 1 built, followed by the severity scale, the hum
-work, the macOS app, the numpy model port and a four-part adversarial audit with
-its fixes. Evidence below is from one delivered audiobook (12 chapters used for
+**Status (2026-09-30):** milestone 1 built, followed by the severity scale, the hum
+work, the macOS app, the numpy model port, a four-part adversarial audit and a
+six-part pre-publish review, each with its fixes. Evidence below is from one delivered audiobook (12 chapters used for
 calibration), reported only as anonymous aggregates; the client-specific record
 is kept privately, outside this repository.
 
@@ -27,12 +27,17 @@ fpab rules
   chopped-word check ran, when, a breaths line), then the problem events (every
   finding, severity 1-3) in time order, then, a few empty rows below, the
   informational events (quiet breaths, and the pause map when asked for). The CSVs
-  show the two to four measures per check a mixer uses; `report.json` keeps them all. A CSV the tool did not write is never replaced
-  (`<name> (2).csv` instead); its own are recognised by their first cell (or the
-  earlier single-table header). `--progress jsonl` drives the macOS app.
+  show the two to four measures per check a mixer uses; `report.json` keeps them all. A CSV is
+  replaced only when it is this tool's report for the same WAV (its first cell, or the
+  earlier single-table header; the summary's file name and — away from the WAV — its
+  folder); anything else, a symlink included, gets `<name> (2).csv`, and a "(k)" name
+  that is another audio file's own is skipped. `--progress jsonl` drives the macOS app.
+- The run report never replaces files in `--out` that the tool did not write; that is
+  checked, with the folder's writability, before the analysis starts.
 
-One bad file (missing, empty, unreadable, corrupt, an unexpected error, an
-unwritable CSV) is skipped with a note; the batch always finishes.
+One bad file (missing, empty, unreadable, an unexpected error, an unwritable CSV) is
+skipped with a note; the batch always finishes, and the command exits 1. A file that
+can be read but is not usable narration is a severity-3 file event (§3.10).
 
 ## 2. Severity
 
@@ -41,7 +46,8 @@ the tool is triage for an experienced mixer. Every finding gets a severity
 **1 (worth a listen) to 3 (worst)**. Normal narration produces no findings.
 Breath and noise levels are judged against the narration (a noisy section's
 severity against the speech within ±10 s); the other checks use fixed dBFS limits.
-Severities are graded on the value the text shows (0.1 dB).
+Severities are graded on the value the report shows (0.1 dB; the whole dB where the
+text rounds, as for hum and plosive).
 
 ## 3. Checks
 
@@ -85,7 +91,8 @@ ends and lists the same 10 (9 real chops, 1 clean ending), on its second title 0
 on two further titles 8 listings, all hard abrupt endings, none missing part of a word
 (operator). Scoring every pause instead, as fpab first did, gave 64 listings with no
 real chop. The port matches the reference within 1e-4 on synthetic windows at
-11.025-88.2 kHz and to 1e-7 on real windows; its tests catch 16 of 16 planted bugs.
+11.025-44.1 kHz (its resampler also at 88.2 kHz) and to 1e-7 on real windows; in the
+audit its tests caught 16 of 16 planted bugs.
 
 ### 3.3 Hum
 
@@ -93,13 +100,18 @@ Any steady tone 40 Hz-1 kHz, at any level. Severity (operator, after hearing bot
 edges of all 12 hums on the calibration title): 1 for a low-level hum, most of them;
 2 when strong (loudest line ≥ −55 dBFS; the two called strong measured −53.8 and
 −54.3, the loudest of the rest −55.5); 3 when strong and it starts or cuts off
-abruptly. On that title: 2 at severity 3, 10 at 1.
+abruptly. On that title: 2 at severity 3, 10 at 1. Graded on the whole-dB level the
+text shows.
 - Tracked in 2 s windows (a line ≥ 10 dB over its ±10 Hz neighbourhood, held within
   1 Hz for ≥ 3 s; pieces of one line up to 3 s apart joined). A tracked line must
   also be heard in a nearby pause, unless there are no pauses around it (a hum
   loud enough to fill them). Evidence: tracking alone found 8 lines on the
   calibration title; the operator heard only 1 as hum — the only one also present
-  in a pause.
+  in a pause. A hum loud enough to fill the pauses inside it but not those around it
+  (it starts and stops mid-chapter) is heard in the gaps it fills instead (≥ 0.4 s,
+  ≥ 15 dB under the narration, within 6 dB of the hum): synthetic hums of −45 and
+  −40 dBFS for 4-50 s were otherwise missed or listed only as noise; the calibration
+  title still lists its 12 hums and nothing more.
 - Found in the pauses (speech hides lines in the voice's range): the same line in
   ≥ 2 pauses over ≥ 3 s, at least −70 dBFS (operator's floor). Evidence: 11 found,
   all 11 confirmed by ear.
@@ -125,8 +137,9 @@ the missed one had a normal floor (a room-character question, see §6).
 
 A classic dropout (operator): the sound falls to dead silence for a frame or less (29.97 fps,
 ~33 ms) and comes straight back. A run of at least 10 exact zeros (at 44.1 kHz, scaled; a slow
-zero crossing leaves at most 9) lasting at most 33 ms, with at least −45 dBFS in the 5 ms before
-and the 5 ms after. Always severity 3. Generated narration has no room, so digital silence after a
+zero crossing leaves at most 9) lasting at most 33.4 ms, with at least −45 dBFS in the 5 ms before
+and the 5 ms after. Always severity 3. Skipped for 8-bit audio (its steps round quiet sound to
+exact zero), with a note. Generated narration has no room, so digital silence after a
 word is just a pause and is not listed. None on the calibration title's 12 chapters or a second
 title's 5 (a guard); planted in real narration, holes of 10 samples to 15 ms inside words are
 listed 60/60, 30 ms 58/60, and 8-sample holes, 40 ms holes and holes in quiet audio 0/60.
@@ -138,8 +151,8 @@ removing it leaves the word intact). A burst below 100 Hz of at least −42 dBFS
 40 ms wide, low-dominated (≥ 22 dB over 500–8000 Hz at its peak), over before the word
 (the low band falls ≥ 30 dB) and followed 75–150 ms later by the word's high end (≥ 20 dB
 above the high end at the pop). A normal p/b carries the word's high end with its burst.
-Severity by level: 1 from −42 dBFS, 2 from −34, 3 from −26. A pop within a mouth-click
-inhale or up to 200 ms after it is part of that breath's entry. Evidence: 10 of 12
+Severity by level (the whole dB shown): 1 from −42 dBFS, 2 from −34, 3 from −26. A pop
+overlapping a mouth-click inhale or up to 200 ms after it is part of that breath's entry. Evidence: 10 of 12
 QC-noted pops; a blind round of 32 looser candidates: 10 of 11 wanted, 1 of 21 others
 (limits set on those clips); held out, 29 of 32 listings were plosives by ear. About 11 per
 15-minute chapter.
@@ -155,7 +168,9 @@ de-clicker, reimplemented), at least −45 dBFS at its peak, and at least 100 ms
 the words and from any breath on both sides (a breath's own mouth click belongs to
 the breath check). Evidence: 64 candidates from looser rules heard across 12
 chapters, 2 confirmed ticks; this rule lists exactly those 2 and nothing else in the
-12 chapters. Set on the same chapters, so a second title must confirm it.
+12 chapters. Set on the same chapters, so a second title must confirm it. The same
+rule covers the room tone before the first word and after the last (only the word
+side needs the 100 ms).
 
 ### 3.8 Digital tick
 
@@ -167,12 +182,21 @@ when it is extremely short (≤ 8 samples at 44.1 kHz, at half its peak), loud
 tick inside a consonant blends in. Evidence: 32 candidates from a looser rule were
 all consonants by ear; this rule lists none on the whole title (41 files). Planted
 one-sample spikes: 100 % found in pauses at −40 dBFS, about half inside speech at
-−30 dBFS. No real example has been heard yet.
+−30 dBFS. No real example has been heard yet. The step into and out of a dropout, or
+into the digital black of a clip end, is that event's own edge and is not listed again.
 
 ### 3.9 Pause map (informational)
 
 Every pause word to word, with its duration and a guess at its kind from the
 chosen generic rule set; head/tail compared with the rule (±0.1 s). No severity.
+The guess reads the length as listed (0.01 s).
+
+### 3.10 File problems
+
+Severity 3, so an unusable file never reads as clean: invalid (NaN/Inf) samples
+(zeroed for the analysis; what they cause is not listed again, and a NaN in one
+channel of dual mono counts too), audio data that ends before its header says, no
+narration found, or a file under 1 s.
 
 ## 4. macOS app
 
@@ -185,17 +209,24 @@ optional pause rows. **Fully sandboxed with no network entitlement**; the engine
 file (or two WAVs share it) the app asks once for that folder and writes
 `<name> (2).csv`. A CSV that cannot be placed is kept and can be saved later.
 `macos/build_app.sh` assembles it in a staging folder, installs hash-checked
-locked dependencies, signs every Mach-O, asserts exact entitlements and moves the
-app into place only when all checks pass.
+locked dependencies and hash-pinned build backends, removes the building Mac's
+folder names from what it bundles (and refuses to finish if any remain), signs
+every Mach-O, asserts exact entitlements and moves the app into place only when all
+checks pass. The app never replaces a CSV it did not write for that WAV; reports it
+could not place are kept until saved, and it asks before discarding them.
 
 ## 5. Safety and dependencies
 
 - Client audio never leaves the machine: analysis runs under a network guard (a
-  Python audit hook refusing DNS, connect, send, bind and child processes, counted
-  in every report) and, in the app, the OS sandbox without network access.
+  Python audit hook refusing socket creation, DNS, connect, send, bind, child
+  processes and ctypes routes to them, counted in every report) and, in the app,
+  the OS sandbox without network access. The guard sees what goes through Python;
+  the sandbox is the hard boundary (the command line can run under
+  `sandbox-exec` with the network denied; see the README).
 - No client identifiers or client-derived specifics in this repository.
-- 7-day package hold (`[tool.uv] exclude-newer`, asserted by the build); the build
-  backend is pinned. Model weights: fetched only by `fpab setup-model` from a pinned
+- 7-day package hold (`[tool.uv] exclude-newer`, asserted by the build); fpab's
+  build backend is pinned, and the app build pins the backends of what it builds
+  from source by hash (`macos/build-constraints.txt`). Model weights: fetched only by `fpab setup-model` from a pinned
   revision, SHA-256 verified on every load, parsed strictly (no pickle, no code).
 
 ## 6. Open items

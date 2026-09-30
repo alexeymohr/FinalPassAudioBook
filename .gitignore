@@ -2,12 +2,22 @@
 *.wav
 *.wave
 *.bwf
+*.w64
+*.rf64
 *.aifc
+*.caf
+*.aac
 *.m4a
 *.m4b
+*.mp4
 *.ogg
 *.opus
 *.safetensors
+*.pt
+*.pth
+*.bin
+*.onnx
+*.ckpt
 # Reports carry client file names: never commit them.
 *.csv
 report.json
@@ -17,7 +27,6 @@ pauses.txt
 *.aiff
 *.flac
 *.mp3
-*.m4a
 models/
 resources/
 .venv/
@@ -25,6 +34,12 @@ __pycache__/
 *.pyc
 .pytest_cache/
 fpab-report/
+build/
+dist/
+*.egg-info/
+# local settings and secrets
+.claude/
+.env
 
 # macOS app build output
 macos/build/
