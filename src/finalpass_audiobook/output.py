@@ -21,6 +21,9 @@ PROBLEMS_LABEL = "PROBLEM EVENTS"
 PROBLEMS_NOTE = "severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen"
 INFO_LABEL = "INFORMATIONAL EVENTS"
 INFO_NOTE = "quiet breaths and, when asked for, the pause map; no severity"
+# An empty row written as empty cells (",,,,,,"): a truly blank line is dropped by some spreadsheet
+# apps when they open a CSV, which would lose the spacing.
+SPACER = [""] * len(ISSUE_COLUMNS)
 
 LEGEND = [
     "Severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen.",
@@ -178,14 +181,14 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
     with open(path, "w", newline="", encoding=CSV_ENCODING) as fh:
         w = csv.writer(fh)
         w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
-        w.writerows([[]] * 2)
+        w.writerow(SPACER)
         w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])       # the key, standing on its own
-        w.writerow([])
+        w.writerow(SPACER)
         w.writerow(ISSUE_COLUMNS)
         w.writerows(problems)
-        w.writerows([[]] * 2)
+        w.writerows([SPACER] * 2)
         w.writerow([INFO_LABEL, "", "", INFO_NOTE])
-        w.writerow([])
+        w.writerow(SPACER)
         w.writerow(ISSUE_COLUMNS)
         w.writerows(info)
         if pauses is None:
