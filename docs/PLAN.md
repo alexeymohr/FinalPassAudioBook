@@ -39,8 +39,9 @@ unwritable CSV) is skipped with a note; the batch always finishes.
 Nothing an automated check finds is a rejection: the features are subjective, and
 the tool is triage for an experienced mixer. Every finding gets a severity
 **1 (worth a listen) to 3 (worst)**. Normal narration produces no findings.
-Levels are judged against the speech around each finding (±10 s), not fixed dBFS,
-except hum. Severities are graded on the value the text shows (0.1 dB).
+Breath and noise levels are judged against the narration (a noisy section's
+severity against the speech within ±10 s); the other checks use fixed dBFS limits.
+Severities are graded on the value the text shows (0.1 dB).
 
 ## 3. Checks
 

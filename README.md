@@ -13,17 +13,21 @@ none.
 
 | check | severity | status |
 |---|---|---|
-| Mouth-click inhale (breath opening with a click) | 3 after a clear gap and loud; 2 after a gap, quiet; 1 no gap (a hard consonant may run into the inhale) | calibrated on one title's operator labels, heard in context |
-| Loud breath | 2 | calibrated on one title's operator labels |
-| Word ends abruptly where a generated clip ends (local model) | 1 | evaluated on four titles |
-| Hum (a steady tone, also found in the pauses when speech covers it) | 3 | 12 of 12 listed hums confirmed by ear on one title; 7 lines that tracking alone found were not hum and are no longer listed |
-| Noisy section (floor within 41 dB of the speech ≥ 3 s) | 3 / 2 / 1 by how close the floor comes to the speech | one title's QC room-tone notes |
-| Sound cutting out abruptly (at least speech −31 dB) | 3 / 2 / 1 by the level that cuts out | first guess; needs real examples |
-| Plosive pop (burst below 65 Hz louder than the speech) | 3 / 2 / 1 by how much louder | first guess; needs real examples |
+| Mouth-click inhale (a breath that opens with a click, after a pause since the word) | 3 when the click is loud (narration −20 dB or more), else 2 | calibrated on one title's operator labels; 32 of 32 held-out listings confirmed by ear |
+| Breath (every breath, by its loudness against the narration) | quiet ones informational; 1 / 2 / 3 from −31.6 / −26.4 / −22.5 dB | a fixed scale set on one title's breaths (its 35th / 75th / 95th percentiles) |
+| Plosive pop (a low thump below 100 Hz on its own, just before a word) | 1 / 2 / 3 from −42 / −34 / −26 dBFS | 10 of one title's 12 QC-noted pops; held out, 29 of 32 listings were plosives by ear |
+| Click in a pause (a tick or click in the silence, 100 ms clear of words and breaths) | 3 | on one title's 12 chapters, the 2 ticks confirmed by ear and nothing else; a second title must confirm it |
+| Digital tick (a spike above 16.5 kHz, a few samples long, standing alone) | 3 | a guard: none on a whole title; 40 of 40 planted spikes in pauses found |
+| Dropout (dead digital silence for a frame or less, about 33 ms, inside audible sound) | 3 | a guard: none in 17 chapters of two titles; planted holes of 10 samples to 15 ms inside words all found |
+| Word ends abruptly where a generated clip ends (local model) | 1 | four titles: found all 9 real chops on one; elsewhere only hard endings, nothing missing |
+| Hum (a steady tone, also found in the pauses when speech covers it) | 1; 2 when strong (−55 dBFS or more); 3 when strong and it starts or stops abruptly | 12 of 12 listed hums confirmed by ear on one title |
+| Noisy section (noise floor within 41 dB of the narration for about 5.5 s) | 3 / 2 / 1 as the floor comes within 25 / 32 / 41 dB of the speech | 6 of one title's 7 QC-noted noisy blocks |
 | Pause map with a guess at each pause's kind | informational | two generic rule sets (`fpab rules`) |
 
-Levels are judged against the speech around each spot (±10 s), not fixed dBFS,
-so the checks follow the master. `--min-sev 2` lists only severity 2 and 3;
+Breath and noise levels are judged against the narration, so they follow the
+master; the other checks use fixed dBFS limits. Quiet breaths are informational:
+`report.json` and the per-file CSVs (`--csv-per-file`, and the app) list them
+apart from the problems. `--min-sev 2` lists only severity 2 and 3;
 `report.json` always keeps everything.
 
 Breath analysis comes from [FinalPass](https://github.com/alexeymohr/FinalPass).
