@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SEVERITIES = (3, 2, 1)   # 3 worst, 1 lowest; nothing here is a rejection
 
 
@@ -40,6 +40,8 @@ class FileResult(BaseModel):
     path: str
     sample_rate: int
     duration_seconds: float
+    audio_format: str = ""          # e.g. "WAV (Microsoft), Signed 24 bit PCM"
+    channels: int = 0
     narration_dbfs: float | None
     noise_floor_dbfs: float | None
     findings: list[Finding]

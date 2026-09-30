@@ -3,8 +3,10 @@ import AppKit
 /// Puts a finished CSV where the operator asked, using only access the sandbox has granted,
 /// and never replaces a CSV this tool did not write.
 enum Placement {
-    /// The header every fpab CSV starts with (after a UTF-8 BOM): how "ours" is recognised.
-    static let header = "file,time,problem,severity,end_time,check,measures"
+    /// How "ours" is recognised (after a UTF-8 BOM): the first cell of an fpab report, or the header
+    /// line of a CSV an earlier version wrote. Kept in step with output.py.
+    static let reportMarker = "FinalPass AudioBook report"
+    static let legacyHeader = "file,time,problem,severity,end_time,check,measures"
 
     enum Existing { case none, ours, foreign }
 
@@ -39,7 +41,7 @@ enum Placement {
     }
 
     /// Ours if this app wrote it and it is unchanged since (the sandbox may let the app see a CSV
-    /// beside a WAV without reading it), or if it is readable and starts with our header.
+    /// beside a WAV without reading it), or if it is readable and starts like one of ours.
     static func kind(of url: URL) -> Existing {
         guard FileManager.default.fileExists(atPath: url.path) else { return .none }
         if let sig = signature(url), written()[url.path] == sig { return .ours }
@@ -48,7 +50,8 @@ enum Placement {
         let head = String(decoding: (try? handle.read(upToCount: 256)) ?? Data(), as: UTF8.self)
         let first = head.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
         let clean = first.trimmingCharacters(in: CharacterSet(charactersIn: "\u{FEFF}\r"))
-        return clean == header ? .ours : .foreign
+        let firstCell = clean.split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)
+        return firstCell == reportMarker || clean == legacyHeader ? .ours : .foreign
     }
 
     // MARK: CSVs this app wrote: path -> size and modification time when written

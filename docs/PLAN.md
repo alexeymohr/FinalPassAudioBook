@@ -16,14 +16,19 @@ fpab rules
 ```
 
 - `issues.txt` / `issues.csv`: what a QC reviewer is likely to notice, per file, in
-  time order (`file, time, problem, severity, end_time, check, measures`); skipped
+  time order (`file, start_time, end_time, event, severity, check, measures`); skipped
   files are listed with the reason.
 - `pauses.txt` / `pauses.csv`: the pause map (informational).
 - `report.json`: everything — tunables, every measurement, all scored phrase ends,
   network attempts (must be 0).
-- `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`),
-  optionally with the pause rows; a CSV the tool did not write is never replaced
-  (`<name> (2).csv` instead). `--progress jsonl` drives the macOS app.
+- `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`). It
+  opens with a summary (one label and value per row: file, format, duration, problem
+  and informational event counts, narration level, noise floor, rule set, whether the
+  chopped-word check ran, when), then the problem events (every finding, severity 1-3)
+  in time order, then, a few empty rows below, the informational events (the pause
+  map, when asked for). A CSV the tool did not write is never replaced
+  (`<name> (2).csv` instead); its own are recognised by their first cell (or the
+  earlier single-table header). `--progress jsonl` drives the macOS app.
 
 One bad file (missing, empty, unreadable, corrupt, an unexpected error, an
 unwritable CSV) is skipped with a note; the batch always finishes.

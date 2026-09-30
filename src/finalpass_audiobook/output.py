@@ -12,7 +12,11 @@ from .findings import SEVERITIES, FileResult, Finding, RunReport
 ISSUES_TXT, ISSUES_CSV = "issues.txt", "issues.csv"
 PAUSES_TXT, PAUSES_CSV = "pauses.txt", "pauses.csv"
 REPORT_JSON = "report.json"
-ISSUE_COLUMNS = ["file", "time", "problem", "severity", "end_time", "check", "measures"]
+ISSUE_COLUMNS = ["file", "start_time", "end_time", "event", "severity", "check", "measures"]
+REPORT_MARKER = "FinalPass AudioBook report"       # first cell of a per-file CSV: how "ours" is recognised
+LEGACY_HEADER = "file,time,problem,severity,end_time,check,measures"   # per-file CSVs before the summary
+PROBLEMS_LABEL = "PROBLEM EVENTS (severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen)"
+INFO_LABEL = "INFORMATIONAL EVENTS (the pause map; no severity)"
 
 LEGEND = [
     "Severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen.",
@@ -66,13 +70,13 @@ def write(report: RunReport, out_dir: Path, min_sev: int = 1) -> list[Path]:
         w.writerow(ISSUE_COLUMNS)
         for fr in report.files:
             if not fr.sample_rate:                      # skipped files are listed too, with the reason
-                w.writerow([_cell(fr.file), "", "; ".join(fr.notes) or "skipped", "", "", "file", ""])
+                w.writerow([_cell(fr.file), "", "", "; ".join(fr.notes) or "skipped", "", "file", ""])
             for f in shown(fr.findings, min_sev):
                 w.writerow(_row(f))
     paths[2].write_text(pauses_text(report), encoding="utf-8")
     with open(paths[3], "w", newline="", encoding=CSV_ENCODING) as fh:
         w = csv.writer(fh)
-        w.writerow(["file", "time", "duration_s", "guess", "kind"])
+        w.writerow(["file", "start_time", "duration_s", "guess", "kind"])
         for fr in report.files:
             for p in listed(fr.pauses):
                 w.writerow([_cell(fr.file), p.start_time, f"{p.duration_ms / 1000:.3f}", p.guess, p.kind])
@@ -89,12 +93,13 @@ CSV_ENCODING = "utf-8-sig"      # with a BOM, so Excel shows "—" and "→" cor
 
 
 def is_ours(path: Path) -> bool:
-    """A CSV this tool wrote (its exact header), as opposed to someone else's file of that name."""
+    """A CSV this tool wrote (its first line), as opposed to someone else's file of that name."""
     try:
         with open(path, encoding=CSV_ENCODING) as fh:
-            return fh.readline().rstrip("\r\n") == ",".join(ISSUE_COLUMNS)
+            first = fh.readline().rstrip("\r\n")
     except (OSError, UnicodeDecodeError):
         return False
+    return first.split(",", 1)[0] == REPORT_MARKER or first == LEGACY_HEADER
 
 
 def _cell(value) -> str:        # noqa: ANN001
@@ -104,20 +109,56 @@ def _cell(value) -> str:        # noqa: ANN001
 
 
 def _row(f: Finding) -> list:
-    return [_cell(f.file), f.start_time, f.problem, f.severity, f.end_time, f.check, _measures(f)]
+    return [_cell(f.file), f.start_time, f.end_time, f.problem, f.severity, f.check, _measures(f)]
 
 
-def file_csv(fr: FileResult, path: Path, with_pauses: bool = False) -> Path:
-    """Every finding of one file (and, if asked, its pause map) as one CSV, in time order."""
-    rows = [(f.start_sample, _row(f)) for f in fr.findings]
+def _level(dbfs: float | None) -> str:
+    return "n/a" if dbfs is None else f"{dbfs:.1f} dBFS".replace("-", "\u2212")   # a true minus: never a formula
+
+
+def summary_rows(fr: FileResult, informational: int | None, context: dict | None = None) -> list[list]:
+    """The top of a per-file CSV: what was checked and what was found, one label and value per row."""
+    context = context or {}
+    sr = fr.sample_rate
+    channels = f"{fr.channels} channel{'' if fr.channels == 1 else 's'}" if fr.channels else ""
+    fmt = ", ".join(x for x in (fr.audio_format, f"{sr / 1000:g} kHz" if sr else "", channels) if x)
+    rows = [[REPORT_MARKER, context.get("version", "")],
+            ["file", _cell(fr.file)],
+            ["format", fmt],
+            ["duration", samples_to_clock(round(fr.duration_seconds * sr), sr) if sr else ""],
+            ["problem events", f"{len(fr.findings)} ({tally(fr.findings)})"],
+            ["informational events", f"{informational} (pause map)" if informational is not None
+             else "not included (pause rows are off)"],
+            ["narration level", _level(fr.narration_dbfs)],
+            ["noise floor", _level(fr.noise_floor_dbfs)]]
+    rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "analysed") if context.get(k)]
+    if fr.notes:
+        rows.append(["notes", _cell("; ".join(fr.notes))])
+    return rows
+
+
+def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dict | None = None) -> Path:
+    """One file's report: a summary, then every problem event in time order, then (if asked) the
+    informational pause map, a few empty rows apart."""
+    problems = [_row(f) for f in sorted(fr.findings, key=lambda f: f.start_sample)]
+    info = None
     if with_pauses and fr.sample_rate:
-        rows += [(p.start_sample, [_cell(fr.file), p.start_time, f"pause {p.duration_ms / 1000:.2f} s — {p.guess}",
-                                   "", samples_to_clock(p.end_sample, fr.sample_rate), "pause",
-                                   f"kind={p.kind}; duration_s={p.duration_ms / 1000:.3f}"])
-                 for p in listed(fr.pauses)]
+        info = [[_cell(fr.file), p.start_time, samples_to_clock(p.end_sample, fr.sample_rate),
+                 f"pause {p.duration_ms / 1000:.2f} s — {p.guess}", "", "pause",
+                 f"kind={p.kind}; duration_s={p.duration_ms / 1000:.3f}"] for p in listed(fr.pauses)]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding=CSV_ENCODING) as fh:
         w = csv.writer(fh)
+        w.writerows(summary_rows(fr, None if info is None else len(info), context))
+        w.writerows([[]] * 2)
+        w.writerow([PROBLEMS_LABEL])
         w.writerow(ISSUE_COLUMNS)
-        w.writerows(r for _, r in sorted(rows, key=lambda z: z[0]))
+        w.writerows(problems)
+        w.writerows([[]] * 3)
+        w.writerow([INFO_LABEL])
+        w.writerow(ISSUE_COLUMNS)
+        if info is None:
+            w.writerow(["", "", "", "not included (pause rows are off)"])
+        else:
+            w.writerows(info)
     return path

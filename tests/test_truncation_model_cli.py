@@ -83,7 +83,7 @@ def test_check_command_writes_everything_and_touches_no_network(tmp_path: Path) 
     assert r.exit_code == 0, r.output
     for name in ("issues.txt", "issues.csv", "pauses.txt", "pauses.csv", "report.json"):
         assert (out / name).is_file()
-    assert (out / "issues.csv").read_text(encoding="utf-8-sig").splitlines()[0].startswith("file,time,problem")
+    assert (out / "issues.csv").read_text(encoding="utf-8-sig").splitlines()[0].startswith("file,start_time,end_time,event")
     report = json.loads((out / "report.json").read_text())
     assert report["network_attempts"] == 0 and report["rules"] == "standard"
     (fr,) = report["files"]

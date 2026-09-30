@@ -53,6 +53,15 @@ class RunOptions:
                 "truncation": self.truncation_tunables.as_dict() if self.truncation else "off"}
 
 
+def _audio_format(path: Path) -> str:
+    try:
+        import soundfile as sf
+        info = sf.info(str(path))
+        return f"{info.format_info}, {info.subtype_info}"
+    except Exception:                    # the format line is a courtesy; never fail a file over it
+        return ""
+
+
 def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None) -> FileResult:
     say = stage or (lambda name: None)
     say("loading")
@@ -107,6 +116,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         counts[f"sev_{f.severity}"] = counts.get(f"sev_{f.severity}", 0) + 1
     return FileResult(
         file=ch.name, path=str(path), sample_rate=ch.sr, duration_seconds=round(ch.duration_s, 3),
+        audio_format=_audio_format(path), channels=ch.audio.channel_count,
         narration_dbfs=round(ch.narration_dbfs, 2) if ch.narration_dbfs == ch.narration_dbfs else None,
         noise_floor_dbfs=round(floor, 1) if floor is not None else None,
         findings=findings, pauses=pauses, truncation_candidates=records, counts=counts,

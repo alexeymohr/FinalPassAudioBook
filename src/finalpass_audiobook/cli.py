@@ -97,12 +97,19 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         print(json.dumps(event), flush=True)
 
     written_csv: dict[int, str] = {}
+    from datetime import datetime
+
+    from . import __version__
+    model_on = opts.truncation and installed()
+    csv_context = {"version": __version__, "rules": rules_name,
+                   "chopped-word check": "on" if model_on else ("off (model not installed)" if opts.truncation else "off"),
+                   "analysed": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
     def file_done(i: int, fr) -> None:
         csv_path = None
         if per_file and fr.sample_rate:
             try:
-                csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses))
+                csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
             except OSError as exc:          # an unwritable CSV is a note on this file, not the end of the run
                 fr.notes.append(f"could not write the CSV: {exc}")
         if jsonl:

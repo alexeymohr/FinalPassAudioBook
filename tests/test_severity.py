@@ -182,11 +182,11 @@ def test_issue_list_shows_severity_and_a_tally() -> None:
 def test_min_sev_filters_the_lists_but_json_keeps_everything(tmp_path: Path) -> None:
     write(_report(), tmp_path, min_sev=2)
     rows = (tmp_path / "issues.csv").read_text(encoding="utf-8-sig").splitlines()
-    assert rows[0].startswith("file,time,problem,severity")
-    assert [r.split(",")[3] for r in rows[1:]] == ["3", "2"]
+    assert rows[0].startswith("file,start_time,end_time,event,severity")
+    assert [r.split(",")[4] for r in rows[1:]] == ["3", "2"]
     assert "one" not in (tmp_path / "issues.txt").read_text()
     report = json.loads((tmp_path / "report.json").read_text())
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
     assert [f["severity"] for f in report["files"][0]["findings"]] == [1, 3, 2]
 
 

@@ -2,7 +2,6 @@
 Synthetic audio only."""
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
@@ -12,6 +11,8 @@ from click.testing import CliRunner
 
 from finalpass_audiobook.cli import main
 from finalpass_audiobook.run import STAGES
+from finalpass_audiobook.output import REPORT_MARKER
+from report_csv import read_report as _report
 from synth import SR, phrase, room
 
 
@@ -23,8 +24,8 @@ def _wav(path: Path) -> Path:
 
 
 def _rows(path: Path) -> list[dict]:
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        return list(csv.DictReader(fh))
+    _, problems, info = _report(path)
+    return problems + info
 
 
 def test_one_csv_beside_each_wav_with_progress_lines(tmp_path: Path, monkeypatch) -> None:
@@ -46,7 +47,13 @@ def test_one_csv_beside_each_wav_with_progress_lines(tmp_path: Path, monkeypatch
         rows = _rows(wav.with_suffix(".csv"))
         assert all(r["check"] != "pause" for r in rows)
     with open(a.with_suffix(".csv"), encoding="utf-8-sig") as fh:
-        assert fh.readline().strip() == "file,time,problem,severity,end_time,check,measures"
+        assert fh.readline().startswith(REPORT_MARKER + ",")
+    summary, problems, info = _report(a.with_suffix(".csv"))
+    assert summary["file"] == "ch01.wav" and summary["duration"].startswith("0:00:")
+    assert "44.1 kHz" in summary["format"] and "1 channel" in summary["format"] and "24 bit" in summary["format"]
+    assert summary["problem events"].startswith(f"{len(problems)} (")
+    assert summary["informational events"].startswith("not included") and info[0]["event"].startswith("not included")
+    assert summary["chopped-word check"] == "off" and summary["rules"] == "standard"
     assert not (tmp_path / "fpab-report").exists()                         # no run report unless asked
 
 
@@ -54,12 +61,16 @@ def test_pause_rows_are_added_on_request_in_time_order(tmp_path: Path) -> None:
     a = _wav(tmp_path / "ch01.wav")
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", "--with-pauses", str(a)])
     assert r.exit_code == 0, r.output
-    rows = _rows(a.with_suffix(".csv"))
-    pauses = [r for r in rows if r["check"] == "pause"]
-    assert pauses and all(r["severity"] == "" and r["problem"].startswith("pause ") for r in pauses)
-    assert any("chapter start" in r["problem"] for r in pauses)
-    times = [r["time"] for r in rows]
-    assert times == sorted(times)
+    summary, problems, pauses = _report(a.with_suffix(".csv"))
+    assert pauses and all(r["check"] == "pause" for r in pauses)
+    assert all(r["severity"] == "" and r["event"].startswith("pause ") for r in pauses)
+    assert all(r["severity"] in ("1", "2", "3") for r in problems)                 # problems first, then the rest
+    assert any("chapter start" in r["event"] for r in pauses)
+    assert summary["informational events"] == f"{len(pauses)} (pause map)"
+    for part in (problems, pauses):
+        times = [r["start_time"] for r in part]
+        assert times == sorted(times)
+        assert all(r["end_time"] >= r["start_time"] for r in part)
 
 
 def test_csv_dir_collects_them_and_keeps_same_names_apart(tmp_path: Path) -> None:
@@ -71,3 +82,18 @@ def test_csv_dir_collects_them_and_keeps_same_names_apart(tmp_path: Path) -> Non
     assert sorted(p.name for p in out.iterdir()) == ["ch01 (2).csv", "ch01.csv"]
     assert (tmp_path / "rep" / "report.json").is_file()                   # --out still writes the report
     assert not a.with_suffix(".csv").exists()
+
+
+def test_our_old_and_new_csvs_are_recognised_and_someone_elses_is_not(tmp_path: Path) -> None:
+    from finalpass_audiobook.output import LEGACY_HEADER, is_ours
+    new, old, other = tmp_path / "a.csv", tmp_path / "b.csv", tmp_path / "c.csv"
+    new.write_text(REPORT_MARKER + ",0.1.0\n", encoding="utf-8-sig")
+    old.write_text(LEGACY_HEADER + "\n", encoding="utf-8-sig")
+    other.write_text("file,time,notes\n", encoding="utf-8-sig")
+    assert is_ours(new) and is_ours(old) and not is_ours(other)
+    a = _wav(tmp_path / "ch01.wav")
+    old.replace(a.with_suffix(".csv"))                    # a CSV an earlier version wrote: replaced, not "(2)"
+    r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", str(a)])
+    assert r.exit_code == 0, r.output
+    assert sorted(p.name for p in tmp_path.glob("ch01*.csv")) == ["ch01.csv"]
+    assert _report(a.with_suffix(".csv"))[0]["file"] == "ch01.wav"

@@ -2,7 +2,6 @@
 Synthetic audio only."""
 from __future__ import annotations
 
-import csv
 import json
 from pathlib import Path
 
@@ -71,10 +70,10 @@ def test_invalid_samples_are_a_finding_and_do_not_disable_the_checks(tmp_path: P
     a = _wav(tmp_path / "nan.wav", x, subtype="FLOAT")
     r = _check("--csv-per-file", "--with-pauses", str(a))
     assert r.exit_code == 0, r.output
-    with open(a.with_suffix(".csv"), newline="", encoding="utf-8-sig") as fh:
-        rows = list(csv.DictReader(fh))
-    assert any(r["check"] == "file" and r["severity"] == "3" and "NaN" in r["problem"] for r in rows)
-    assert any(r["check"] == "pause" for r in rows)            # the rest of the analysis still ran
+    from report_csv import read_report
+    _, problems, info = read_report(a.with_suffix(".csv"))
+    assert any(r["check"] == "file" and r["severity"] == "3" and "NaN" in r["event"] for r in problems)
+    assert any(r["check"] == "pause" for r in info)            # the rest of the analysis still ran
 
 
 def test_empty_file_is_skipped_with_a_reason(tmp_path: Path) -> None:
