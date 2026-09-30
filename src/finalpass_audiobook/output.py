@@ -89,10 +89,11 @@ def pauses_text(report: RunReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _open_write(path: Path, encoding: str = "utf-8"):
-    """Open for writing without following a symlink planted at `path`: a report never lands elsewhere."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o644)
-    return open(fd, "w", newline="", encoding=encoding)
+def _open_write(path: Path, encoding: str = "utf-8", new: bool = False):
+    """Open for writing without following a symlink planted at `path`: a report never lands elsewhere.
+    `new`: only as a new file (FileExistsError if anything is there, even since the name was chosen)."""
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | (os.O_EXCL if new else os.O_TRUNC)
+    return open(os.open(path, flags, 0o644), "w", newline="", encoding=encoding)
 
 
 def run_file_is_ours(path: Path) -> bool:
@@ -196,24 +197,10 @@ def is_ours(path: Path) -> bool:
     return report_source(path) is not None
 
 
-def replaceable(target: Path, wav: Path) -> bool:
-    """May `wav`'s report be written at `target`? Over nothing, or over a report this tool wrote for
-    that same WAV: the same file name and — when the CSV sits in another folder — the same folder, so
-    two books' "Chapter 01" never share a report. Never through a symlink, never over a folder."""
-    if target.is_symlink():
-        return False
-    if not target.exists():
-        return True
-    source = report_source(target)
-    if source is None:
-        return False
-    name, folder = source
-    if name and name_key(name) != name_key(wav.name):
-        return False
-    here = _real(wav).parent
-    if name_key(_real(target).parent) != name_key(here) and name_key(folder) != name_key(here):
-        return False                  # away from the WAV, only a report that names this WAV's folder
-    return True
+def is_free(target: Path) -> bool:
+    """Nothing at all is at `target` — not a file (ours or anyone's), a folder or a link. A per-file
+    CSV is only ever written as a new file (operator): an earlier report is never replaced."""
+    return not (target.exists() or target.is_symlink())
 
 
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "'")   # "'" too, so the guard always reads back
@@ -277,19 +264,24 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
     info = [r for _, r in sorted([(f.start_sample, _row(f)) for f in fr.informational] + (pauses or []),
                                  key=lambda z: z[0])]
     path.parent.mkdir(parents=True, exist_ok=True)
-    with _open_write(path, CSV_ENCODING) as fh:
-        w = csv.writer(fh)
-        w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
-        w.writerow(SPACER)
-        w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])       # the key, standing on its own
-        w.writerow(SPACER)
-        w.writerow(ISSUE_COLUMNS)
-        w.writerows(problems)
-        w.writerows([SPACER] * 2)
-        w.writerow([INFO_LABEL, "", "", INFO_NOTE])
-        w.writerow(SPACER)
-        w.writerow(ISSUE_COLUMNS)
-        w.writerows(info)
-        if pauses is None:
-            w.writerow(["", "", "", "pause map not included (pause rows are off)"])
+    fh = _open_write(path, CSV_ENCODING, new=True)                # never over an existing file
+    try:
+        with fh:
+            w = csv.writer(fh)
+            w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
+            w.writerow(SPACER)
+            w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])   # the key, standing on its own
+            w.writerow(SPACER)
+            w.writerow(ISSUE_COLUMNS)
+            w.writerows(problems)
+            w.writerows([SPACER] * 2)
+            w.writerow([INFO_LABEL, "", "", INFO_NOTE])
+            w.writerow(SPACER)
+            w.writerow(ISSUE_COLUMNS)
+            w.writerows(info)
+            if pauses is None:
+                w.writerow(["", "", "", "pause map not included (pause rows are off)"])
+    except BaseException:
+        path.unlink(missing_ok=True)            # this run created it: never leave a cut-off report
+        raise
     return path

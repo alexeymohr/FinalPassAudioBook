@@ -100,11 +100,12 @@ def test_our_old_and_new_csvs_are_recognised_and_someone_elses_is_not(tmp_path: 
     other.write_text("file,time,notes\n", encoding="utf-8-sig")
     assert is_ours(new) and is_ours(old) and not is_ours(other)
     a = _wav(tmp_path / "ch01.wav")
-    old.replace(a.with_suffix(".csv"))                    # a CSV an earlier version wrote: replaced, not "(2)"
+    old.replace(a.with_suffix(".csv"))                    # a CSV an earlier version wrote: kept, like any file
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", str(a)])
     assert r.exit_code == 0, r.output
-    assert sorted(p.name for p in tmp_path.glob("ch01*.csv")) == ["ch01.csv"]
-    assert _report(a.with_suffix(".csv"))[0]["file"] == "ch01.wav"
+    assert sorted(p.name for p in tmp_path.glob("ch01*.csv")) == ["ch01 (2).csv", "ch01.csv"]
+    assert (tmp_path / "ch01.csv").read_text(encoding="utf-8-sig") == LEGACY_HEADER + "\n"
+    assert _report(tmp_path / "ch01 (2).csv")[0]["file"] == "ch01.wav"
 
 
 def test_problems_and_informational_events_never_mix(tmp_path: Path) -> None:

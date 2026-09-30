@@ -11,9 +11,9 @@ then the informational events; a checkbox adds the pause map's rows.
   chopped-word model runs as numpy (no PyTorch), held to the audited torch code.
 - **Where CSVs go.** Next to each WAV as `<name>.csv` (macOS lets a sandboxed app
   create a same-name file beside one it was given), or into a folder you choose once.
-  A CSV is replaced only when it is this app's report for the same WAV (so two books'
-  "Chapter 01" never share one); otherwise it asks once for that folder and writes
-  `<name> (2).csv`. A CSV that cannot be placed is kept in the app until you save it
+  An existing file is never replaced, not even this app's own earlier report: a new
+  report gets `<name> (2).csv`, `(3)`, …. Beside the WAVs that needs access to the folder,
+  which the app asks for once per folder and remembers. A CSV that cannot be placed is kept in the app until you save it
   ("Save Unsaved CSVs…"); the app asks before Go, Remove or Clear discard it, and any
   still unsaved when the app quits are offered again at the next launch.
 

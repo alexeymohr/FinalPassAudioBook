@@ -70,14 +70,23 @@ def test_two_books_chapter_01_never_share_a_report_across_runs(tmp_path: Path) -
     a, b = _wav(tmp_path / "bookA" / "ch01.wav"), _wav(tmp_path / "bookB" / "ch01.wav")
     out = tmp_path / "csvs"
     assert _check("--csv-dir", str(out), str(a), str(b)).exit_code == 0
-    first = (out / "ch01.csv").read_bytes()
+    first, second = (out / "ch01.csv").read_bytes(), (out / "ch01 (2).csv").read_bytes()
     assert report_source(out / "ch01.csv") == ("ch01.wav", str((tmp_path / "bookA").resolve()))
     assert _check("--csv-dir", str(out), str(b)).exit_code == 0           # book B alone, later
-    assert (out / "ch01.csv").read_bytes() == first                        # book A's report untouched
-    assert report_source(out / "ch01 (2).csv") == ("ch01.wav", str((tmp_path / "bookB").resolve()))
-    assert sorted(p.name for p in out.iterdir()) == ["ch01 (2).csv", "ch01.csv"]
-    summary, _, _ = read_report(out / "ch01 (2).csv")
+    assert (out / "ch01.csv").read_bytes() == first and (out / "ch01 (2).csv").read_bytes() == second
+    assert report_source(out / "ch01 (3).csv") == ("ch01.wav", str((tmp_path / "bookB").resolve()))
+    summary, _, _ = read_report(out / "ch01 (3).csv")
     assert summary["folder"] == str((tmp_path / "bookB").resolve())
+
+
+def test_a_rerun_never_replaces_the_earlier_report(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "ch01.wav")
+    assert _check("--csv-per-file", str(a)).exit_code == 0
+    first = (tmp_path / "ch01.csv").read_bytes()
+    for _ in range(2):
+        assert _check("--csv-per-file", str(a)).exit_code == 0
+    assert (tmp_path / "ch01.csv").read_bytes() == first
+    assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["ch01 (2).csv", "ch01 (3).csv", "ch01.csv"]
 
 
 def test_a_numbered_name_is_never_another_wavs_own(tmp_path: Path) -> None:
@@ -194,6 +203,23 @@ def test_a_name_starting_with_an_apostrophe_reads_back(tmp_path: Path) -> None:
     for name in ("'-01.wav", "'plain.wav", "-01.wav", "=01.wav", "ch01.wav"):
         assert _uncell(_cell(name)) == name
     a = _wav(tmp_path / "'-01.wav")
-    for _ in range(2):
-        assert _check("--csv-per-file", str(a)).exit_code == 0
-    assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["'-01.csv"]
+    assert _check("--csv-per-file", str(a)).exit_code == 0
+    assert report_source(tmp_path / "'-01.csv")[0] == "'-01.wav"
+
+
+def test_a_csv_that_fails_part_way_is_not_left_behind(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.output as output
+    from finalpass_audiobook.findings import FileResult
+
+    def broken(*a, **k):           # noqa: ANN002, ANN003
+        raise OSError("No space left on device")
+    monkeypatch.setattr(output, "summary_rows", broken)
+    fr = FileResult(file="c.wav", path=str(tmp_path / "c.wav"), sample_rate=SR, duration_seconds=1.0,
+                    narration_dbfs=None, noise_floor_dbfs=None, findings=[], pauses=[])
+    with pytest.raises(OSError):
+        output.file_csv(fr, tmp_path / "c.csv")
+    assert not (tmp_path / "c.csv").exists()
+    (tmp_path / "c.csv").write_text("mine\n")
+    with pytest.raises(FileExistsError):                          # never over an existing file
+        output.file_csv(fr, tmp_path / "c.csv")
+    assert (tmp_path / "c.csv").read_text() == "mine\n"

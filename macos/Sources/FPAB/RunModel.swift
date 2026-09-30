@@ -48,7 +48,10 @@ final class RunModel {
     @ObservationIgnored private var taken = Set<String>()          // CSV paths used in this run (case-folded)
     @ObservationIgnored private var altFolders: [String: URL] = [:] // folder -> granted access, for "(2)" names
 
-    init() { Self.sweepOldRuns() }
+    init() {
+        Self.sweepOldRuns()
+        UserDefaults.standard.removeObject(forKey: "writtenCSVs")   // an earlier version's record of CSV paths
+    }
 
     // MARK: files
 
@@ -169,8 +172,8 @@ final class RunModel {
         panel.canChooseDirectories = true
         panel.directoryURL = dir
         panel.prompt = "Allow"
-        panel.message = "A CSV you made already has the name this app would use in “\(dir.lastPathComponent)”. "
-            + "Allow this folder so the report can be saved as “… (2).csv” instead of replacing yours."
+        panel.message = "A CSV with the name this app would use already exists in “\(dir.lastPathComponent)”. "
+            + "Allow this folder so the new report can be saved as “… (2).csv”. Existing files are never replaced."
         guard panel.runModal() == .OK, let url = panel.url,
               url.standardizedFileURL.path == dir.standardizedFileURL.path,
               let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil,
@@ -253,14 +256,15 @@ final class RunModel {
         }
     }
 
-    /// Before the run: where "<name>.csv" beside a WAV would replace someone else's file, or two WAVs
-    /// in one folder would share it, ask once for that folder so "<name> (2).csv" can be written.
+    /// Before the run: where "<name>.csv" beside a WAV already exists (any file, an earlier report
+    /// too), or two WAVs in one folder would share it, ask once for that folder so "<name> (2).csv"
+    /// can be written.
     private func preflightBesideWAVs() {
         var seen = Set<String>()
         var needFolders: [URL] = []
         for item in items {
             let key = Self.key(Placement.besideTarget(for: item.url))
-            let clash = seen.contains(key) || Placement.existingBeside(item.url) == .foreign
+            let clash = seen.contains(key) || Placement.existsBeside(item.url)
             seen.insert(key)
             let dir = item.url.deletingLastPathComponent()
             if clash && !needFolders.contains(where: { $0.path == dir.path }) { needFolders.append(dir) }
@@ -361,12 +365,11 @@ final class RunModel {
             let granted = folder.startAccessingSecurityScopedResource()
             defer { if granted { folder.stopAccessingSecurityScopedResource() } }
             guard granted else { throw CocoaError(.fileWriteNoPermission) }
-            return try Placement.intoFolder(csv, folder: folder, stem: stem, wav: wav, taken: &taken)
+            return try Placement.intoFolder(csv, folder: folder, stem: stem, taken: &taken)
         case .besideWAV:
             let key = Self.key(Placement.besideTarget(for: wav))
             let inRun = taken.contains(key)
-            if !inRun && Placement.existingBeside(wav) != .foreign {
-                let placed = try Placement.besideWAV(csv, wav: wav)
+            if !inRun, !Placement.existsBeside(wav), let placed = try Placement.besideWAV(csv, wav: wav) {
                 taken.insert(key)
                 return placed
             }
@@ -374,7 +377,7 @@ final class RunModel {
             guard let alt = altFolders[dir.path] else { throw Placement.Failure.needsFolderAccess(dir, nameTakenInRun: inRun) }
             let granted = alt.startAccessingSecurityScopedResource()
             defer { if granted { alt.stopAccessingSecurityScopedResource() } }
-            return try Placement.intoFolder(csv, folder: alt, stem: stem, wav: wav, taken: &taken)
+            return try Placement.intoFolder(csv, folder: alt, stem: stem, taken: &taken)
         }
     }
 
@@ -429,7 +432,7 @@ final class RunModel {
         for i in items.indices {
             guard case .unsaved = items[i].state, let kept = items[i].csv else { continue }
             let stem = items[i].url.deletingPathExtension().lastPathComponent
-            if let placed = try? Placement.intoFolder(kept, folder: dir, stem: stem, wav: items[i].url, taken: &used) {
+            if let placed = try? Placement.intoFolder(kept, folder: dir, stem: stem, taken: &used) {
                 discardKept(items[i])
                 items[i].csv = placed
                 items[i].state = .done

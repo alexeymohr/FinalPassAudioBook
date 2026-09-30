@@ -44,16 +44,16 @@ def main() -> None:
     """FinalPassAudioBook: local, offline QC for audiobook chapters."""
 
 
-def _pick(first: Path, wav: Path, seen: set[str]) -> Path:
-    """`first`, or the first of `first (2)`, `(3)`, … that is not taken in this run (`seen`), not
-    another audio file's own CSV name there, and holds nothing but this tool's report for `wav`."""
-    from .output import _real, name_key, replaceable
+def _pick(first: Path, seen: set[str]) -> Path:
+    """`first`, or the first of `first (2)`, `(3)`, … where nothing exists yet (an earlier report is
+    never replaced), not taken in this run (`seen`) and not another audio file's own CSV name there."""
+    from .output import _real, is_free, name_key
 
     def audio_named(folder: Path, stem: str) -> bool:
         return any((folder / f"{stem}{s}").exists() for s in (*AUDIO_SUFFIXES, *(x.upper() for x in AUDIO_SUFFIXES)))
 
     target, k = first, 2
-    while name_key(_real(target)) in seen or not replaceable(target, wav):
+    while name_key(_real(target)) in seen or not is_free(target):
         target = first.with_name(f"{first.stem} ({k}){first.suffix}")
         k += 1
         while audio_named(target.parent, target.stem):
@@ -63,13 +63,13 @@ def _pick(first: Path, wav: Path, seen: set[str]) -> Path:
 
 
 def _csv_targets(files: list[Path], csv_dir: Path | None, reserved: tuple[Path, ...] = ()) -> list[Path]:
-    """Where each file's CSV goes: beside the WAV, or into csv_dir (see `_pick`) — nothing is replaced
-    but our own report for the same WAV. `reserved`: the run report's files."""
+    """Where each file's CSV goes: beside the WAV, or into csv_dir (see `_pick`) — always a new file.
+    `reserved`: the run report's files."""
     from .output import _real, csv_name, name_key
 
     out, seen = [], {name_key(_real(p)) for p in reserved}
     for f in files:
-        target = _pick((csv_dir or f.parent) / csv_name(f), f, seen)
+        target = _pick((csv_dir or f.parent) / csv_name(f), seen)
         seen.add(name_key(_real(target)))
         out.append(target)
     return out
@@ -116,7 +116,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     import json
 
     from .model import installed
-    from .output import RUN_FILES, _real, csv_name, file_csv, name_key, replaceable, run_report_clashes, tally, write
+    from .output import RUN_FILES, _real, csv_name, file_csv, name_key, run_report_clashes, tally, write
     from .run import STAGES, RunOptions, run
 
     files = _expand(paths)
@@ -157,10 +157,13 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         csv_path = None
         if per_file and fr.sample_rate:
             try:
-                if not replaceable(targets[i], files[i]):    # something appeared there during the run
-                    targets[i] = _pick((csv_dir or files[i].parent) / csv_name(files[i]), files[i], planned)
-                    planned.add(name_key(_real(targets[i])))
-                csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
+                for _ in range(100):            # a file that appeared there during the run: the next name
+                    try:
+                        csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
+                        break
+                    except FileExistsError:
+                        targets[i] = _pick((csv_dir or files[i].parent) / csv_name(files[i]), planned)
+                        planned.add(name_key(_real(targets[i])))
             except Exception as exc:        # an unwritable CSV is a note on this file, not the end of the run
                 fr.notes.append(f"could not write the CSV: {exc}")
                 failed_csv.append(i)

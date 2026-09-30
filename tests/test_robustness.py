@@ -60,8 +60,8 @@ def test_a_csv_we_did_not_write_is_kept(tmp_path: Path) -> None:
     assert r.exit_code == 0, r.output
     assert mine.read_text(encoding="utf-8") == "my own notes\n"
     assert (tmp_path / "ch01 (2).csv").is_file()
-    r = _check("--csv-per-file", str(a))                      # our own CSV is replaced on a re-run
-    assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["ch01 (2).csv", "ch01.csv"]
+    r = _check("--csv-per-file", str(a))                      # a re-run never replaces: a new name
+    assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["ch01 (2).csv", "ch01 (3).csv", "ch01.csv"]
 
 
 def test_invalid_samples_are_a_finding_and_do_not_disable_the_checks(tmp_path: Path) -> None:

@@ -27,11 +27,11 @@ fpab rules
   chopped-word check ran, when, a breaths line), then the problem events (every
   finding, severity 1-3) in time order, then, a few empty rows below, the
   informational events (quiet breaths, and the pause map when asked for). The CSVs
-  show the two to four measures per check a mixer uses; `report.json` keeps them all. A CSV is
-  replaced only when it is this tool's report for the same WAV (its first cell, or the
-  earlier single-table header; the summary's file name and — away from the WAV — its
-  folder); anything else, a symlink included, gets `<name> (2).csv`, and a "(k)" name
-  that is another audio file's own is skipped. `--progress jsonl` drives the macOS app.
+  show the two to four measures per check a mixer uses; `report.json` keeps them all. An
+  existing file is never replaced (operator), not even an earlier report: a new report
+  gets `<name> (2).csv`, `(3)`, …, created as a new file (a file that appears during the
+  run is not overwritten either), skipping a "(k)" name that is another audio file's own.
+  The summary names the WAV's file and folder. `--progress jsonl` drives the macOS app.
 - The run report never replaces files in `--out` that the tool did not write; that is
   checked, with the folder's writability, before the analysis starts.
 
@@ -208,15 +208,15 @@ Go, a progress bar, one CSV per WAV beside it (`<name>.csv`) or in a chosen fold
 optional pause rows. **Fully sandboxed with no network entitlement**; the engine
 (a copied Python with fpab, the `uv.lock` versions and the verified weights, about
 180 MB in all) is bundled and runs inside the sandbox. The sandbox allows only
-`<name>.csv` beside a WAV it was given, so where that would replace someone else's
-file (or two WAVs share it) the app asks once for that folder and writes
-`<name> (2).csv`. A CSV that cannot be placed is kept and can be saved later.
+`<name>.csv` beside a WAV it was given, so where that name already exists (or two WAVs
+share it) the app asks once for that folder and writes `<name> (2).csv`. A CSV that
+cannot be placed is kept and can be saved later.
 `macos/build_app.sh` assembles it in a staging folder, installs hash-checked
 locked dependencies and hash-pinned build backends, removes the building Mac's
 folder names from what it bundles (and refuses to finish if any remain), signs
 every Mach-O, asserts exact entitlements and moves the app into place only when all
-checks pass. The app never replaces a CSV it did not write for that WAV; reports it
-could not place are kept until saved, it asks before discarding them, and any left
+checks pass. The app never replaces an existing file; reports it could not place are
+kept until saved, it asks before discarding them, and any left
 when it quits are offered again at the next launch.
 
 ## 5. Safety and dependencies

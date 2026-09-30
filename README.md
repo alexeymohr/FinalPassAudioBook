@@ -54,9 +54,9 @@ recursively); each file must be mono, or have identical channels. It writes
 `--out` (default `./fpab-report`, or, with `--csv-per-file`, only when `--out`
 is given); it never replaces files there that it did not write. `--csv-per-file`
 writes one CSV per WAV beside it (or into `--csv-dir`): a summary, the problem
-events, then the informational events; `--with-pauses` adds the pause map. A CSV
-is replaced only when it is this tool's report for the same WAV — otherwise the
-new one is `<name> (2).csv`. `fpab check --help` lists every option. Without the
+events, then the informational events; `--with-pauses` adds the pause map. An
+existing file is never replaced, not even an earlier report: a new one gets
+`<name> (2).csv`, `(3)`, …. `fpab check --help` lists every option. Without the
 model installed, the chopped-word check is skipped with a note. It exits 1 when a
 file was skipped or a report could not be written (`--progress jsonl`, which the
 app uses, reports that per file instead). `fpab setup-model` is the only command
