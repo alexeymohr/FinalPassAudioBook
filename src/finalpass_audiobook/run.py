@@ -91,7 +91,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     noise_list, floor = noise_findings(ch, opts.noise, exclude=tones)
     findings += noise_list
     say("dropouts")
-    findings += dropout_findings(ch, act.floor_dbfs, opts.dropouts)
+    findings += dropout_findings(ch, opts.dropouts)
     say("plosives")
     spans = act.breath_spans + tuple((e.start_sample, e.end_sample) for e in breaths.breaths)
     mouth_clicks = tuple((f.start_sample, f.end_sample) for f in breath_list if f.measures.get("mouth_click") == "yes")

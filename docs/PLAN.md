@@ -117,9 +117,14 @@ the missed one had a normal floor (a room-character question, see §6).
 
 ### 3.5 Sound cutting out
 
-A step of ≥ 20 dB within 5 ms from background (room tone, breath, word tail) to
-well under the chapter floor, listed only from speech −31 dB (about −50 dBFS);
-3 from speech −18 dB, 2 from −26 dB, else 1. First guess; needs labelled examples.
+Generated narration has no room; short stretches of exact digital zero are everywhere in edited
+deliveries (about 60 per 15 minutes on one title), almost all inside very quiet background, and
+the operator does not count those. Listed only when the drop to nothing is heard: a run of exact
+zeros of at least 300 samples (at 44.1 kHz, scaled) whose last 5 ms before it are at least
+−45 dBFS. Always severity 3. Sound cutting in from silence is not listed. Evidence: 32 blind
+holes in quiet background (−64 to −98 dBFS before the cut) were not noticeable drops; this rule
+lists 1 cut in 12 chapters of the calibration title (a word's tail at −30 dBFS) and 1 in 5
+chapters of a second title.
 
 ### 3.6 Plosive pop
 
@@ -190,17 +195,16 @@ app into place only when all checks pass.
 
 ## 6. Open items
 
-1. Dropout limits: calibrate on labelled examples.
-2. The chopped-word model's precision on phrase ends into room tone (its
+1. The chopped-word model's precision on phrase ends into room tone (its
    evaluation covered clip ends into digital black).
-3. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic
+2. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic
    audio a cut can be missed when a low-pitched word starts on it.
-4. A further generic pause rule set (numbers pending from the operator).
-5. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
-6. Breath frames are computed twice per chapter (needs a small FinalPass API change).
-7. Half-precision weights would save ~25 MB (changes the audited file; needs the
+3. A further generic pause rule set (numbers pending from the operator).
+4. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
+5. Breath frames are computed twice per chapter (needs a small FinalPass API change).
+6. Half-precision weights would save ~25 MB (changes the audited file; needs the
    operator's OK, a recorded SHA-256 and the same equivalence bar).
-8. Click in a pause: confirm the limits on a second title. Digital tick: no real
+7. Click in a pause: confirm the limits on a second title. Digital tick: no real
    example yet (limits set with planted spikes).
-9. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
+8. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
    hands-on check by the operator.

@@ -5,11 +5,10 @@ import numpy as np
 import pytest
 from scipy.signal import lfilter
 
-from finalpass_audiobook.activity import measure
-from finalpass_audiobook.checks.dropouts import DropoutTunables, dropout_findings
+from finalpass_audiobook.checks.dropouts import dropout_findings
 from finalpass_audiobook.checks.noise import floor_track, noise_findings
 from finalpass_audiobook.checks.plosives import plosive_findings
-from synth import RNG, SR, chapter, phrase, room
+from synth import RNG, SR, band_noise, chapter, phrase, room
 
 
 def _narration(seconds: float, room_dbfs: float = -72.0) -> np.ndarray:
@@ -76,44 +75,36 @@ def test_clean_narration_is_not_noisy() -> None:
 # --- dropouts --------------------------------------------------------------
 
 
-def _cut(background_dbfs: float) -> tuple[np.ndarray, int, int]:
-    lead = np.concatenate([_narration(5.0, room_dbfs=background_dbfs), phrase(3)])
-    gap = room(1.2, background_dbfs)
-    x = np.concatenate([lead, gap, phrase(3), _narration(5.0, room_dbfs=background_dbfs)])
-    cut0, cut1 = len(lead) + int(0.4 * SR), len(lead) + int(0.8 * SR)
-    x[cut0:cut1] = 0.0
-    return x, cut0, cut1
+def _cut_after(level_dbfs: float, silence_s: float = 0.1) -> tuple[np.ndarray, int]:
+    """Narration, then a steady sound at `level_dbfs`, cut to exact zero for `silence_s`, then more."""
+    t = np.arange(int(0.5 * SR)) / SR
+    tone = np.sqrt(2) * 10 ** (level_dbfs / 20) * np.sin(2 * np.pi * 1000.0 * t)   # exact RMS: a steady tone
+    x = np.concatenate([_narration(4.0), tone, np.zeros(int(silence_s * SR)), _narration(4.0)])
+    return x, int(4.0 * SR) + len(tone)
 
 
-def test_background_cut_to_black_and_back_is_found() -> None:
-    lead = np.concatenate([_narration(5.0, room_dbfs=-45.0), phrase(3)])
-    gap = room(1.2, -45.0)
-    x = np.concatenate([lead, gap, phrase(3), _narration(5.0, room_dbfs=-45.0)])
-    cut0, cut1 = len(lead) + int(0.4 * SR), len(lead) + int(0.8 * SR)
-    x[cut0:cut1] = 0.0                                   # the room tone drops out to black
-    ch = chapter(x)
-    floor = measure(ch).floor_dbfs
-    (out,) = dropout_findings(ch, floor)
-    assert abs(out.start_sample - cut0) < 0.01 * SR and out.problem.startswith("room tone cuts out")
-    both = dropout_findings(ch, floor, DropoutTunables(cut_in=True))
-    near = lambda at: [f.measures["direction"] for f in both if abs(f.start_sample - at) < 0.01 * SR]
-    assert near(cut0) == ["out"] and near(cut1) == ["in"]
+@pytest.mark.parametrize("level_dbfs, listed", [(-30.0, True), (-44.0, True), (-47.0, False), (-70.0, False)])
+def test_a_cut_to_silence_is_listed_only_when_heard(level_dbfs: float, listed: bool) -> None:
+    x, at = _cut_after(level_dbfs)
+    found = [f for f in dropout_findings(chapter(x)) if abs(f.start_sample - at) < 10]
+    assert len(found) == int(listed)
+    for f in found:
+        assert f.severity == 3 and f.measures["silence_ms"] == 100
+        assert abs(f.measures["level_before_dbfs"] - level_dbfs) < 0.5
+
+
+def test_a_few_zero_samples_are_not_a_dropout() -> None:
+    x, at = _cut_after(-30.0, silence_s=250 / SR)             # 250 samples: under the 300 needed
+    assert [f for f in dropout_findings(chapter(x)) if abs(f.start_sample - at) < 10] == []
+
+
+def test_sound_starting_from_silence_is_not_listed() -> None:
+    x = np.concatenate([np.zeros(SR), band_noise(1.0, 300, 3000, -20.0), _narration(3.0)])
+    assert [f for f in dropout_findings(chapter(x)) if f.start_sample < 2 * SR] == []
 
 
 def test_natural_endings_into_room_tone_are_not_dropouts() -> None:
-    ch = chapter(_narration(12.0, room_dbfs=-45.0))
-    assert dropout_findings(ch, measure(ch).floor_dbfs) == []
-
-
-@pytest.mark.parametrize("background_dbfs, severity", [(-35, 3), (-40, 2), (-47, 1), (-62, None)])
-def test_dropout_severity_follows_what_cuts_out(background_dbfs: float, severity: int | None) -> None:
-    """Speech about -18 dBFS: from -18 dB -> 3, -26 -> 2, -31 -> 1; quieter room tone is not listed."""
-    x, cut0, _ = _cut(background_dbfs)
-    ch = chapter(x)
-    found = dropout_findings(ch, measure(ch).floor_dbfs)
-    assert [f.severity for f in found] == ([severity] if severity else [])
-    for f in found:
-        assert abs(f.start_sample - cut0) < 0.01 * SR
+    assert dropout_findings(chapter(_narration(12.0, room_dbfs=-45.0))) == []
 
 
 # --- plosives --------------------------------------------------------------
