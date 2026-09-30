@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SEVERITIES = (3, 2, 1)   # 3 worst, 1 lowest; nothing here is a rejection
 
 
@@ -22,7 +22,7 @@ class Finding(BaseModel):
     start_time: str
     end_time: str
     problem: str = Field(description="plain language; never overstates what was measured")
-    severity: int = Field(ge=1, le=3, description="3 worst, 1 lowest")
+    severity: int = Field(ge=0, le=3, description="3 worst, 1 lowest; 0 = informational (listed, not a problem)")
     measures: dict[str, float | int | str] = {}
 
 
@@ -45,6 +45,7 @@ class FileResult(BaseModel):
     narration_dbfs: float | None
     noise_floor_dbfs: float | None
     findings: list[Finding]
+    informational: list[Finding] = []    # severity 0: every event worth knowing that is not a problem (quiet breaths)
     pauses: list[Pause]
     truncation_candidates: list[dict] = []
     counts: dict[str, int] = {}

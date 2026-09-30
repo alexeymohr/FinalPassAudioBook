@@ -16,7 +16,7 @@ ISSUE_COLUMNS = ["file", "start_time", "end_time", "event", "severity", "check",
 REPORT_MARKER = "FinalPass AudioBook report"       # first cell of a per-file CSV: how "ours" is recognised
 LEGACY_HEADER = "file,time,problem,severity,end_time,check,measures"   # per-file CSVs before the summary
 PROBLEMS_LABEL = "PROBLEM EVENTS (severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen)"
-INFO_LABEL = "INFORMATIONAL EVENTS (the pause map; no severity)"
+INFO_LABEL = "INFORMATIONAL EVENTS (quiet breaths and, when asked for, the pause map; no severity)"
 
 LEGEND = [
     "Severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen.",
@@ -109,11 +109,19 @@ def _cell(value) -> str:        # noqa: ANN001
 
 
 def _row(f: Finding) -> list:
-    return [_cell(f.file), f.start_time, f.end_time, f.problem, f.severity, f.check, _measures(f)]
+    return [_cell(f.file), f.start_time, f.end_time, f.problem, f.severity or "", f.check, _measures(f)]
 
 
 def _level(dbfs: float | None) -> str:
     return "n/a" if dbfs is None else f"{dbfs:.1f} dBFS".replace("-", "\u2212")   # a true minus: never a formula
+
+
+def _breaths(fr: FileResult) -> str:
+    c = fr.counts
+    if "breaths" not in c:
+        return ""
+    return (f"{c['breaths']} found: {c.get('breaths_listed', 0)} listed as problems "
+            f"({c.get('mouth_click_inhales', 0)} mouth-click inhales), {c.get('quiet_breaths', 0)} quiet (informational)")
 
 
 def summary_rows(fr: FileResult, informational: int | None, context: dict | None = None) -> list[list]:
@@ -127,8 +135,10 @@ def summary_rows(fr: FileResult, informational: int | None, context: dict | None
             ["format", fmt],
             ["duration", samples_to_clock(round(fr.duration_seconds * sr), sr) if sr else ""],
             ["problem events", f"{len(fr.findings)} ({tally(fr.findings)})"],
-            ["informational events", f"{informational} (pause map)" if informational is not None
-             else "not included (pause rows are off)"],
+            ["informational events", f"{len(fr.informational) + (informational or 0)} "
+             f"({len(fr.informational)} quiet breaths, "
+             + (f"{informational} pauses)" if informational is not None else "pause rows are off)")],
+            ["breaths", _breaths(fr)],
             ["narration level", _level(fr.narration_dbfs)],
             ["noise floor", _level(fr.noise_floor_dbfs)]]
     rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "analysed") if context.get(k)]
@@ -141,15 +151,17 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
     """One file's report: a summary, then every problem event in time order, then (if asked) the
     informational pause map, a few empty rows apart."""
     problems = [_row(f) for f in sorted(fr.findings, key=lambda f: f.start_sample)]
-    info = None
+    pauses = None
     if with_pauses and fr.sample_rate:
-        info = [[_cell(fr.file), p.start_time, samples_to_clock(p.end_sample, fr.sample_rate),
-                 f"pause {p.duration_ms / 1000:.2f} s — {p.guess}", "", "pause",
-                 f"kind={p.kind}; duration_s={p.duration_ms / 1000:.3f}"] for p in listed(fr.pauses)]
+        pauses = [(p.start_sample, [_cell(fr.file), p.start_time, samples_to_clock(p.end_sample, fr.sample_rate),
+                                    f"pause {p.duration_ms / 1000:.2f} s — {p.guess}", "", "pause",
+                                    f"kind={p.kind}; duration_s={p.duration_ms / 1000:.3f}"]) for p in listed(fr.pauses)]
+    info = [r for _, r in sorted([(f.start_sample, _row(f)) for f in fr.informational] + (pauses or []),
+                                 key=lambda z: z[0])]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding=CSV_ENCODING) as fh:
         w = csv.writer(fh)
-        w.writerows(summary_rows(fr, None if info is None else len(info), context))
+        w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
         w.writerows([[]] * 2)
         w.writerow([PROBLEMS_LABEL])
         w.writerow(ISSUE_COLUMNS)
@@ -157,8 +169,7 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
         w.writerows([[]] * 3)
         w.writerow([INFO_LABEL])
         w.writerow(ISSUE_COLUMNS)
-        if info is None:
-            w.writerow(["", "", "", "not included (pause rows are off)"])
-        else:
-            w.writerows(info)
+        w.writerows(info)
+        if pauses is None:
+            w.writerow(["", "", "", "pause map not included (pause rows are off)"])
     return path

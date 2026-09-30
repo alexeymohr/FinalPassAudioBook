@@ -28,11 +28,20 @@ def test_ladder_boundaries_are_inclusive() -> None:
 # --- mouth-click inhale ----------------------------------------------------
 
 
-def _event(start: int, t_inhale: bool = False, grade: int = 2) -> BreathEvent:
+def _event(start: int, t_inhale: bool = False, loudness: float = -40.0) -> BreathEvent:
     return BreathEvent(start_sample=start, end_sample=start + 11025, start_time="0:00:01.000",
                        end_time="0:00:01.250", duration_ms=250, peak_db=-20.0, body_db=-30.0,
-                       noticeability_db=-28.0, grade=grade, t_inhale=t_inhale, t_inhale_score=0.5,
+                       noticeability_db=loudness, grade=2, t_inhale=t_inhale, t_inhale_score=0.5,
                        click_gap_samples=None, click_gap_ms=None, click_rel_db=None)
+
+
+@pytest.mark.parametrize("loudness, severity", [
+    (-50.0, 0), (-31.61, 0),                  # quiet: informational
+    (-31.6, 1), (-26.41, 1), (-26.4, 2), (-22.51, 2), (-22.5, 3), (-10.0, 3),
+])
+def test_breath_loudness_scale(loudness, severity) -> None:
+    from finalpass_audiobook.checks.breaths import breath_loudness_severity
+    assert breath_loudness_severity(loudness) == severity
 
 
 @pytest.mark.parametrize("silence_ms, click_db, severity", [
@@ -74,32 +83,34 @@ def _clicky_narration() -> tuple[np.ndarray, dict[str, int]]:
     return np.concatenate(parts), at
 
 
-def test_breath_findings_mouth_click_needs_a_pause_before_the_click(monkeypatch: pytest.MonkeyPatch) -> None:
-    x, at = _clicky_narration()
-    lead = int(0.02 * SR)
-    events = [_event(at["pause_harsh"] + lead),                         # click after a pause: 3
-              _event(at["closure"] + lead, t_inhale=True),              # right after the word: not listed
-              _event(at["pause_small"] + lead),                         # quiet click after a pause: 2
-              _event(at["none"], grade=3)]                              # loud breath, no click: 2
+def _fake(monkeypatch: pytest.MonkeyPatch, x: np.ndarray, events: list) -> None:
     fake = BreathAssetResult(path="c.wav", sample_rate=SR, duration_seconds=len(x) / SR, narration_dbfs=-18.0,
                              counts=BreathCounts(), breaths=events)
     monkeypatch.setattr(breaths_mod, "analyze_breaths", lambda audio, tunables: fake)
-    found, _ = breath_findings(chapter(x))
-    assert [(f.severity, f.problem.split(":")[0]) for f in found] == [
+
+
+def test_every_breath_is_listed_mouth_clicks_need_a_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    x, at = _clicky_narration()
+    lead = int(0.02 * SR)
+    _fake(monkeypatch, x, [_event(at["pause_harsh"] + lead),                    # click after a pause: 3
+                           _event(at["closure"] + lead, t_inhale=True),         # right after the word, quiet
+                           _event(at["pause_small"] + lead),                    # quiet click after a pause: 2
+                           _event(at["none"], loudness=-24.0)])                 # no click, loud: 2
+    problems, quiet, _ = breath_findings(chapter(x))
+    assert [(f.severity, f.problem.split(":")[0]) for f in problems] == [
         (3, "mouth-click inhale"), (2, "small mouth-click inhale"), (2, "loud breath")]
-    assert abs(found[0].start_sample - at["pause_harsh"]) < int(0.004 * SR)   # listed at the click
-    assert found[0].measures["ms_since_word"] >= 250
-    assert all("T-inhale" not in f.problem for f in found)
-    assert BreathSeverity().loud_breath == 2
+    assert [(f.severity, f.problem) for f in quiet] == [(0, "quiet breath")]    # nothing left behind
+    assert abs(problems[0].start_sample - at["pause_harsh"]) < int(0.004 * SR)  # listed at the click
+    assert problems[0].measures["ms_since_word"] >= 250
+    assert all("T-inhale" not in f.problem for f in problems + quiet)
 
 
 def test_a_click_that_is_also_a_loud_breath_is_one_finding(monkeypatch: pytest.MonkeyPatch) -> None:
     x, at = _clicky_narration()
-    fake = BreathAssetResult(path="c.wav", sample_rate=SR, duration_seconds=len(x) / SR, narration_dbfs=-18.0,
-                             counts=BreathCounts(), breaths=[_event(at["pause_small"] + int(0.02 * SR), grade=3)])
-    monkeypatch.setattr(breaths_mod, "analyze_breaths", lambda audio, tunables: fake)
-    (f,) = breath_findings(chapter(x))[0]
-    assert f.severity == 2 and f.problem.startswith("small mouth-click inhale") and f.problem.endswith("; loud breath")
+    _fake(monkeypatch, x, [_event(at["pause_small"] + int(0.02 * SR), loudness=-20.0)])
+    (f,), quiet, _ = breath_findings(chapter(x))
+    assert not quiet
+    assert f.severity == 3 and f.problem.startswith("small mouth-click inhale") and f.problem.endswith("; very loud breath")
 
 
 # --- hum ---------------------------------------------------------------------
@@ -186,7 +197,7 @@ def test_min_sev_filters_the_lists_but_json_keeps_everything(tmp_path: Path) -> 
     assert [r.split(",")[4] for r in rows[1:]] == ["3", "2"]
     assert "one" not in (tmp_path / "issues.txt").read_text()
     report = json.loads((tmp_path / "report.json").read_text())
-    assert report["schema_version"] == 3
+    assert report["schema_version"] == 4
     assert [f["severity"] for f in report["files"][0]["findings"]] == [1, 3, 2]
 
 

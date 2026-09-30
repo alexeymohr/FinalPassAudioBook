@@ -24,9 +24,9 @@ fpab rules
 - `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`). It
   opens with a summary (one label and value per row: file, format, duration, problem
   and informational event counts, narration level, noise floor, rule set, whether the
-  chopped-word check ran, when), then the problem events (every finding, severity 1-3)
-  in time order, then, a few empty rows below, the informational events (the pause
-  map, when asked for). A CSV the tool did not write is never replaced
+  chopped-word check ran, when, a breaths line), then the problem events (every
+  finding, severity 1-3) in time order, then, a few empty rows below, the
+  informational events (quiet breaths, and the pause map when asked for). A CSV the tool did not write is never replaced
   (`<name> (2).csv` instead); its own are recognised by their first cell (or the
   earlier single-table header). `--progress jsonl` drives the macOS app.
 
@@ -59,8 +59,15 @@ except hum. Severities are graded on the value the text shows (0.1 dB).
   Any pause from 100 to 150 ms gives the same result. On 12 chapters: 75 listed
   (60 at 3) where the old gap rule listed 126, most of them consonants. Held-out:
   32 of those 75, never heard before, all 32 confirmed by ear.
-- **Loud breath** (grade 3): severity 2 — an artistic call, but clients dislike them.
-  A breath that is both is one finding at the higher severity.
+- **Every other breath** is listed too, scored by loudness (FinalPass's
+  noticeability: median level vs the narration, weighted by length): quiet below
+  −31.6 dB (informational), 1 from −31.6, 2 from −26.4, 3 from −22.5. A fixed scale,
+  not relative to each chapter: on the calibration title the lines sit at its 35th
+  (the operator's suggested cut), 75th and 95th percentiles; a second title's
+  breaths sit about 10 dB lower and list far fewer (per chapter about 73 quiet /
+  68 / 38 / 9 against 61 / 2 / 1 / 3). A breath that is both is one finding at the
+  higher severity. The per-file CSV lists quiet breaths as informational events
+  and sums up the breaths in its summary.
 
 ### 3.2 Possible chopped word (local model)
 

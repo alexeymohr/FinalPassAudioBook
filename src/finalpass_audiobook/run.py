@@ -76,7 +76,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
             measures={"invalid_samples": int(ch.invalid_samples.size)}))
     say("breaths")
     rise = rise_db(ch.x, ch.sr, opts.clicks)
-    breath_list, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
+    breath_list, quiet_breaths, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
     findings += breath_list
     say("pauses")
     act = measure(ch)
@@ -108,8 +108,9 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         records = score_phrase_ends(ch, ends, model, opts.truncation_tunables)
         findings += truncation_findings(ch, records)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
-    counts = {"breaths": breaths.counts.breaths, "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
-              "loud_breaths": breaths.counts.grade_3, "pauses": len(act.pauses),
+    counts = {"breaths": breaths.counts.breaths,
+              "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
+              "breaths_listed": len(breath_list), "quiet_breaths": len(quiet_breaths), "pauses": len(act.pauses),
               "phrase_ends_scored": len(records)}
     for f in findings:
         counts[f"{f.check}_findings"] = counts.get(f"{f.check}_findings", 0) + 1
@@ -119,7 +120,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         audio_format=_audio_format(path), channels=ch.audio.channel_count,
         narration_dbfs=round(ch.narration_dbfs, 2) if ch.narration_dbfs == ch.narration_dbfs else None,
         noise_floor_dbfs=round(floor, 1) if floor is not None else None,
-        findings=findings, pauses=pauses, truncation_candidates=records, counts=counts,
+        findings=findings, informational=sorted(quiet_breaths, key=lambda f: f.start_sample), pauses=pauses, truncation_candidates=records, counts=counts,
         notes=ch.notes + [n for n in breaths.notes if n not in ch.notes],
     )
 

@@ -25,9 +25,17 @@ by ear as mouth-click inhales (some milder than others).
 The three clicks the operator called "small" in the first study sat at narration
 -20.7 to -23.9 dB, the other 29 at -18.9 dB or louder.
 
-Loud breath (FinalPass grade 3, "quite noticeable") is severity 2: an artistic
-call, not a mechanical defect, but clients dislike them. Grades 1-2 are counted,
-not listed. A breath that is both is one finding at the higher severity.
+Every other breath is listed too (operator: no breath left behind), scored by
+loudness: FinalPass's noticeability (the breath's median level relative to the
+narration, weighted by its length; its grades were fitted to the operator's own).
+Below -31.6 dB a breath is quiet and informational; from -31.6 it is severity 1,
+from -26.4 severity 2, from -22.5 severity 3. The scale is fixed, not relative to
+each chapter, so a book of quiet breaths lists few: on the calibration title the
+lines sit at its 35th (the operator's suggested cut, which lands on FinalPass's
+very-minor/noticeable boundary), 75th and 95th percentiles, about 73 quiet /
+68 / 38 / 9 breaths per chapter; on a second title, whose breaths sit about
+10 dB lower, about 61 / 2 / 1 / 3. A breath that is also a mouth-click inhale is
+one finding at the higher severity.
 """
 from __future__ import annotations
 
@@ -53,7 +61,9 @@ class BreathSeverity:
     word_vs_narration_db: float = -25.0  # "the word": level within this of the narration
     silence_before_click_ms: float = 100.0
     harsh_click_vs_narration_db: float = -20.0
-    loud_breath: int = 2
+    breath_sev1_db: float = -31.6        # loudness (noticeability) from which a breath is severity 1...
+    breath_sev2_db: float = -26.4        # ...2
+    breath_sev3_db: float = -22.5        # ...3; below sev1 it is quiet: informational
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -64,6 +74,14 @@ def mouth_click_severity(silence_ms: float, click_rel_db: float, s: BreathSeveri
     if silence_ms < s.silence_before_click_ms:
         return 0
     return 3 if click_rel_db >= s.harsh_click_vs_narration_db else 2
+
+
+BREATH_TEXT = {0: "quiet breath", 1: "noticeable breath", 2: "loud breath", 3: "very loud breath"}
+
+
+def breath_loudness_severity(loudness_db: float, s: BreathSeverity = BreathSeverity()) -> int:
+    """0 (quiet: informational) to 3, on the fixed loudness scale."""
+    return sum(loudness_db >= c for c in (s.breath_sev1_db, s.breath_sev2_db, s.breath_sev3_db))
 
 
 MOUTH_CLICK_TEXT = {
@@ -114,17 +132,20 @@ def click_level(ch: Chapter, click: int) -> float:
 
 def breath_findings(ch: Chapter, tunables: BreathTunables = BreathTunables(),
                     sev: BreathSeverity = BreathSeverity(), rise: tuple[np.ndarray, int, int] | None = None,
-                    ) -> tuple[list[Finding], BreathAssetResult]:
-    """`rise`: the click detector's per-frame rise (clicks.rise_db), if already computed."""
+                    ) -> tuple[list[Finding], list[Finding], BreathAssetResult]:
+    """Every breath: (problem findings, quiet breaths as informational events, FinalPass's result).
+    `rise`: the click detector's per-frame rise (clicks.rise_db), if already computed."""
     result = analyze_breaths(ch.mono_audio, tunables)
     r, n, hop = rise if rise is not None else rise_db(ch.x, ch.sr, ClickTunables())
     narration_ok = bool(np.isfinite(ch.narration_dbfs))
-    out: list[Finding] = []
+    problems: list[Finding] = []
+    quiet_breaths: list[Finding] = []
     for e in result.breaths:
         parts: list[tuple[int, str]] = []
         start = e.start_sample
-        measures: dict = {"duration_ms": e.duration_ms, "grade": e.grade, "peak_db_vs_narration": e.peak_db,
-                          "mouth_click": "no"}
+        loud = breath_loudness_severity(e.noticeability_db, sev)
+        measures: dict = {"loudness_db": e.noticeability_db, "duration_ms": e.duration_ms,
+                          "peak_db_vs_narration": e.peak_db, "mouth_click": "no"}
         if narration_ok and r.size:
             at, sharp = _click_near(r, n, hop, ch.sr, e.start_sample, sev)
             if e.t_inhale or sharp >= sev.click_min_rise_db:
@@ -137,14 +158,11 @@ def breath_findings(ch: Chapter, tunables: BreathTunables = BreathTunables(),
                     parts.append((k, MOUTH_CLICK_TEXT[k]))
                     measures["mouth_click"] = "yes"
                     start = min(start, at)
-        if e.grade == 3:
-            parts.append((sev.loud_breath, "loud breath"))
-        if not parts:
-            continue
-        measures["finalpass_t_inhale_score"] = e.t_inhale_score if e.t_inhale_score is not None else "off"
-        out.append(Finding(
-            file=ch.name, check="breaths", start_sample=start, end_sample=e.end_sample,
-            start_time=ch.clock(start), end_time=e.end_time, severity=max(k for k, _ in parts),
-            problem="; ".join(text for _, text in parts), measures=measures,
-        ))
-    return out, result
+        if loud or not parts:
+            parts.append((loud, BREATH_TEXT[loud]))
+        severity = max(k for k, _ in parts)
+        f = Finding(file=ch.name, check="breaths", start_sample=start, end_sample=e.end_sample,
+                    start_time=ch.clock(start), end_time=e.end_time, severity=severity,
+                    problem="; ".join(text for _, text in parts), measures=measures)
+        (problems if severity else quiet_breaths).append(f)
+    return problems, quiet_breaths, result

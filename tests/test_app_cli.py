@@ -52,7 +52,10 @@ def test_one_csv_beside_each_wav_with_progress_lines(tmp_path: Path, monkeypatch
     assert summary["file"] == "ch01.wav" and summary["duration"].startswith("0:00:")
     assert "44.1 kHz" in summary["format"] and "1 channel" in summary["format"] and "24 bit" in summary["format"]
     assert summary["problem events"].startswith(f"{len(problems)} (")
-    assert summary["informational events"].startswith("not included") and info[0]["event"].startswith("not included")
+    assert summary["informational events"].endswith("pause rows are off)")
+    assert info[-1]["event"].startswith("pause map not included")
+    assert all(r["event"] == "quiet breath" and r["severity"] == "" for r in info[:-1])
+    assert summary["breaths"].split()[0].isdigit() and "quiet (informational)" in summary["breaths"]
     assert summary["chopped-word check"] == "off" and summary["rules"] == "standard"
     assert not (tmp_path / "fpab-report").exists()                         # no run report unless asked
 
@@ -61,13 +64,15 @@ def test_pause_rows_are_added_on_request_in_time_order(tmp_path: Path) -> None:
     a = _wav(tmp_path / "ch01.wav")
     r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", "--with-pauses", str(a)])
     assert r.exit_code == 0, r.output
-    summary, problems, pauses = _report(a.with_suffix(".csv"))
-    assert pauses and all(r["check"] == "pause" for r in pauses)
+    summary, problems, info = _report(a.with_suffix(".csv"))
+    pauses = [r for r in info if r["check"] == "pause"]
+    assert pauses and all(r["check"] in ("pause", "breaths") for r in info)
     assert all(r["severity"] == "" and r["event"].startswith("pause ") for r in pauses)
     assert all(r["severity"] in ("1", "2", "3") for r in problems)                 # problems first, then the rest
     assert any("chapter start" in r["event"] for r in pauses)
-    assert summary["informational events"] == f"{len(pauses)} (pause map)"
-    for part in (problems, pauses):
+    quiet = len(info) - len(pauses)
+    assert summary["informational events"] == f"{len(info)} ({quiet} quiet breaths, {len(pauses)} pauses)"
+    for part in (problems, info):
         times = [r["start_time"] for r in part]
         assert times == sorted(times)
         assert all(r["end_time"] >= r["start_time"] for r in part)
