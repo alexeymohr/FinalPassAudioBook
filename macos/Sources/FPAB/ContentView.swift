@@ -44,6 +44,7 @@ struct ContentView: View {
         }
         .padding(20)
         .frame(minWidth: 560, minHeight: 480)
+        .background(CloseButtonGuard(disabled: model.running))
     }
 
     private var dropZone: some View {
@@ -142,5 +143,18 @@ struct ContentView: View {
             .padding(4)
         }
         .disabled(model.running)
+    }
+}
+
+/// While a check runs the window's close button (and Close, Cmd-W) is off: closing the only window
+/// would ask to quit, and "Keep Running" would then leave the app running with no window to show it.
+private struct CloseButtonGuard: NSViewRepresentable {
+    let disabled: Bool
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let off = disabled
+        DispatchQueue.main.async { view.window?.standardWindowButton(.closeButton)?.isEnabled = !off }
     }
 }

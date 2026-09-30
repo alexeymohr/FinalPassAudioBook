@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.isRunning else { return .terminateNow }
+        guard model.running else { return model.mayQuit() ? .terminateNow : .terminateCancel }
         let alert = NSAlert()
         alert.messageText = "A check is still running."
         alert.informativeText = "Quit now and stop it? Files already finished keep their CSVs."

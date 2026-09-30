@@ -48,7 +48,10 @@ final class RunModel {
     @ObservationIgnored private var taken = Set<String>()          // CSV paths used in this run (case-folded)
     @ObservationIgnored private var altFolders: [String: URL] = [:] // folder -> granted access, for "(2)" names
 
-    init() { Self.sweepOldRuns() }
+    init() {
+        Self.sweepOldRuns()
+        Self.sweepUnsaved()
+    }
 
     // MARK: files
 
@@ -57,9 +60,12 @@ final class RunModel {
         let fm = FileManager.default
         var found: [URL] = []
         var emptyFolders: [String] = []
+        var links = 0
         for url in urls {
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
-            if values?.isDirectory == true {
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                links += 1                          // the sandbox grants the link, not what it points to
+            } else if values?.isDirectory == true {
                 let inside = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isRegularFileKey],
                                                           options: [.skipsHiddenFiles])) ?? []
                 let wavs = inside.filter { Self.isAudioFile($0) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
@@ -69,9 +75,13 @@ final class RunModel {
                 found.append(url)
             }
         }
-        let known = Set(items.map(\.url.standardizedFileURL))
-        items += found.filter { !known.contains($0.standardizedFileURL) }.map { Item(url: $0) }
-        if !emptyFolders.isEmpty {
+        var known = Set(items.map { Placement.fold(Placement.realPath($0.url)) })
+        for url in found where known.insert(Placement.fold(Placement.realPath(url))).inserted {  // each file once
+            items.append(Item(url: url))
+        }
+        if links > 0 {
+            status = "\(links) dropped item\(links == 1 ? " is a link" : "s are links"); drop the original files instead."
+        } else if !emptyFolders.isEmpty {
             status = "No WAV files found in “\(emptyFolders.joined(separator: "”, “"))” (sub-folders are not searched)."
         } else if !items.isEmpty {
             status = "\(items.count) file\(items.count == 1 ? "" : "s") ready."
@@ -84,10 +94,18 @@ final class RunModel {
             && (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
     }
 
-    func remove(_ id: UUID) { if !running { items.removeAll { $0.id == id } } }
+    func remove(_ id: UUID) {
+        guard !running, let i = items.firstIndex(where: { $0.id == id }) else { return }
+        if case .unsaved = items[i].state {
+            guard confirmDiscard(1, then: "Remove") else { return }
+            discardKept(items[i])
+        }
+        items.remove(at: i)
+    }
 
     func clear() {
-        guard !running else { return }
+        guard !running, confirmDiscard(unsavedCount, then: "Clear") else { return }
+        items.forEach(discardKept)
         items.removeAll()
         progress = 0
         status = "Drop WAV files to begin."
@@ -117,12 +135,13 @@ final class RunModel {
         output = .folder
     }
 
-    /// A saved security-scoped bookmark, refreshed when macOS reports it stale.
+    /// A saved security-scoped bookmark, refreshed when macOS reports it stale. Never waits on a
+    /// server or asks to mount one (an offline network folder reads as unreachable).
     private static func resolveBookmark(_ data: Data?, key: String?) -> URL? {
         guard let data else { return nil }
         var stale = false
-        guard let url = try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil,
-                                 bookmarkDataIsStale: &stale) else { return nil }
+        guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope, .withoutUI, .withoutMounting],
+                                 relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
         if stale, let key, url.startAccessingSecurityScopedResource() {
             defer { url.stopAccessingSecurityScopedResource() }
             if let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil,
@@ -158,7 +177,8 @@ final class RunModel {
     // MARK: run
 
     func go() {
-        guard canGo else { return }
+        guard canGo, quitWhenDone || confirmDiscard(unsavedCount, then: "Go") else { return }
+        items.forEach(discardKept)
         errorText = nil
         runNotes = []
         taken = []
@@ -174,11 +194,12 @@ final class RunModel {
             preflightBesideWAVs()
         }
         let fm = FileManager.default
-        let work = fm.temporaryDirectory.appendingPathComponent("run-\(UUID().uuidString)", isDirectory: true)
+        let work = fm.temporaryDirectory.appendingPathComponent("\(Self.runPrefix)\(UUID().uuidString)", isDirectory: true)
         let errFile = work.appendingPathComponent("engine-stderr.txt")
         do {
             try fm.createDirectory(at: work, withIntermediateDirectories: true)
             fm.createFile(atPath: errFile.path, contents: nil)
+            try "\(getpid())".write(to: work.appendingPathComponent(Self.ownerFile), atomically: true, encoding: .utf8)
         } catch {
             errorText = "Could not create a working folder: \(error.localizedDescription)"
             return
@@ -311,8 +332,12 @@ final class RunModel {
                 items[i].csv = try place(csv, wav: items[i].url)
                 items[i].state = .done
             } catch {
-                items[i].csv = keepUnsaved(csv)
-                items[i].state = .unsaved(error.localizedDescription)
+                if let kept = keepUnsaved(csv) {
+                    items[i].csv = kept
+                    items[i].state = .unsaved(error.localizedDescription)
+                } else {
+                    items[i].state = .failed("not saved, and the report could not be kept: \(error.localizedDescription)")
+                }
             }
         case "done":
             runNotes = e.notes ?? []
@@ -330,7 +355,7 @@ final class RunModel {
             let granted = folder.startAccessingSecurityScopedResource()
             defer { if granted { folder.stopAccessingSecurityScopedResource() } }
             guard granted else { throw CocoaError(.fileWriteNoPermission) }
-            return try Placement.intoFolder(csv, folder: folder, stem: stem, taken: &taken)
+            return try Placement.intoFolder(csv, folder: folder, stem: stem, wav: wav, taken: &taken)
         case .besideWAV:
             let key = Self.key(Placement.besideTarget(for: wav))
             let inRun = taken.contains(key)
@@ -343,19 +368,48 @@ final class RunModel {
             guard let alt = altFolders[dir.path] else { throw Placement.Failure.needsFolderAccess(dir, nameTakenInRun: inRun) }
             let granted = alt.startAccessingSecurityScopedResource()
             defer { if granted { alt.stopAccessingSecurityScopedResource() } }
-            return try Placement.intoFolder(csv, folder: alt, stem: stem, taken: &taken)
+            return try Placement.intoFolder(csv, folder: alt, stem: stem, wav: wav, taken: &taken)
         }
     }
 
-    /// A CSV that could not be put in place is kept in the app's own storage, never thrown away.
+    /// Where CSVs that could not be put in place wait to be saved: in the app's own storage, one
+    /// folder each (the name stays as it was). Emptied at launch: no run can reach them after a quit,
+    /// and quitting with unsaved reports asks first.
+    private static var unsavedRoot: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Unsaved Reports", isDirectory: true)
+    }
+
+    /// A CSV that could not be put in place is kept, never thrown away without asking.
     private func keepUnsaved(_ csv: URL) -> URL? {
         let fm = FileManager.default
-        guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let dir = base.appendingPathComponent("Unsaved Reports", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dest = dir.appendingPathComponent("\(UUID().uuidString.prefix(8)) \(csv.lastPathComponent)")
+        guard let dir = Self.unsavedRoot?.appendingPathComponent(UUID().uuidString, isDirectory: true),
+              (try? fm.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else { return nil }
+        try? "\(getpid())".write(to: dir.appendingPathComponent(Self.ownerFile), atomically: true, encoding: .utf8)
+        let dest = dir.appendingPathComponent(csv.lastPathComponent)
         return (try? fm.moveItem(at: csv, to: dest)) != nil ? dest : nil
     }
+
+    /// Remove an item's kept report (its folder) once the operator has agreed to let it go.
+    private func discardKept(_ item: Item) {
+        guard case .unsaved = item.state, let kept = item.csv, let root = Self.unsavedRoot,
+              kept.path.hasPrefix(root.path + "/") else { return }
+        try? FileManager.default.removeItem(at: kept.deletingLastPathComponent())
+    }
+
+    /// Ask before `count` unsaved reports are thrown away by `action`. True: go ahead.
+    private func confirmDiscard(_ count: Int, then action: String) -> Bool {
+        guard count > 0 else { return true }
+        let alert = NSAlert()
+        alert.messageText = "\(count) report\(count == 1 ? " is" : "s are") not saved."
+        alert.informativeText = "\(action) will discard \(count == 1 ? "it" : "them"). Use “Save Unsaved CSVs…” to keep them."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard and \(action)")
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    /// Quitting: true when nothing unsaved would be lost, or the operator agrees.
+    func mayQuit() -> Bool { quitWhenDone || confirmDiscard(unsavedCount, then: "Quit") }
 
     /// Save every unsaved CSV into a folder the operator picks now.
     func saveUnsaved() {
@@ -365,12 +419,13 @@ final class RunModel {
         panel.canCreateDirectories = true
         panel.prompt = "Save Here"
         guard panel.runModal() == .OK, let dir = panel.url else { return }
-        var used = Set<String>()
+        // Names this run already placed are never reused: those reports stay where they are.
+        var used = taken.union(items.compactMap { $0.csv.map { Placement.fold($0.path) } })
         for i in items.indices {
             guard case .unsaved = items[i].state, let kept = items[i].csv else { continue }
             let stem = items[i].url.deletingPathExtension().lastPathComponent
-            if let placed = try? Placement.intoFolder(kept, folder: dir, stem: stem, taken: &used) {
-                try? FileManager.default.removeItem(at: kept)
+            if let placed = try? Placement.intoFolder(kept, folder: dir, stem: stem, wav: items[i].url, taken: &used) {
+                discardKept(items[i])
                 items[i].csv = placed
                 items[i].state = .done
             }
@@ -414,12 +469,38 @@ final class RunModel {
         NSApp.terminate(nil)
     }
 
-    /// Working folders left by a crash or a forced quit (their CSVs name client files): removed at launch.
+    private static let runPrefix = "fpab-run-"
+    private static let ownerFile = "owner.pid"
+
+    /// Working folders left by a crash or a forced quit (their CSVs name client files): removed at
+    /// launch — only this app's own, and never one a running copy of the app still uses.
     private static func sweepOldRuns() {
         let fm = FileManager.default
         for url in (try? fm.contentsOfDirectory(at: fm.temporaryDirectory, includingPropertiesForKeys: nil)) ?? []
-        where url.lastPathComponent.hasPrefix("run-") {
+        where url.lastPathComponent.hasPrefix(runPrefix) || url.lastPathComponent.hasPrefix("run-") {
+            if let text = try? String(contentsOf: url.appendingPathComponent(ownerFile), encoding: .utf8),
+               let pid = Int32(text), pid != getpid(), kill(pid, 0) == 0 {
+                continue                                        // another copy of the app is running it
+            }
+            if url.lastPathComponent.hasPrefix("run-"),
+               !fm.fileExists(atPath: url.appendingPathComponent("engine-stderr.txt").path) {
+                continue                                        // not one of ours (an older name)
+            }
             try? fm.removeItem(at: url)
+        }
+    }
+
+    /// Reports kept unsaved by an earlier session: nothing can reach them any more (the operator was
+    /// asked before quitting with any), and they name client files. A running copy's are left alone.
+    private static func sweepUnsaved() {
+        let fm = FileManager.default
+        guard let root = unsavedRoot else { return }
+        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            if let text = try? String(contentsOf: dir.appendingPathComponent(ownerFile), encoding: .utf8),
+               let pid = Int32(text), pid != getpid(), kill(pid, 0) == 0 {
+                continue
+            }
+            try? fm.removeItem(at: dir)
         }
     }
 }
