@@ -26,7 +26,8 @@ fpab rules
   and informational event counts, narration level, noise floor, rule set, whether the
   chopped-word check ran, when, a breaths line), then the problem events (every
   finding, severity 1-3) in time order, then, a few empty rows below, the
-  informational events (quiet breaths, and the pause map when asked for). A CSV the tool did not write is never replaced
+  informational events (quiet breaths, and the pause map when asked for). The CSVs
+  show the two to four measures per check a mixer uses; `report.json` keeps them all. A CSV the tool did not write is never replaced
   (`<name> (2).csv` instead); its own are recognised by their first cell (or the
   earlier single-table header). `--progress jsonl` drives the macOS app.
 

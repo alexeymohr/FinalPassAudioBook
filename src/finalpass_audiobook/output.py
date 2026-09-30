@@ -37,8 +37,24 @@ def tally(findings: list[Finding]) -> str:
     return ", ".join(f"{sum(f.severity == s for f in findings)} × sev {s}" for s in SEVERITIES)
 
 
+# The measures a CSV shows, per check: the few a mixer uses (the rest repeat the event text or are
+# internal). report.json keeps every measure. A check not listed here shows all of its measures.
+CSV_MEASURES = {
+    "breaths": ("loudness_db", "duration_ms", "ms_since_word", "click_db_vs_narration"),
+    "hum": ("frequency_hz", "level_max_dbfs", "harmonics_hz"),
+    "noise": ("floor_under_speech_db", "floor_median_dbfs", "duration_s"),
+    "dropout": ("background_dbfs", "background_vs_speech_db"),
+    "plosive": ("burst_dbfs", "burst_vs_speech_db"),
+    "truncation": ("model_score", "peak_final_30ms_dbfs"),
+    "clicks": ("peak_dbfs", "ms_after_word", "ms_before_word"),
+    "ticks": ("above_16k_dbfs", "width_samples", "peak_dbfs"),
+    "file": ("invalid_samples",),
+}
+
+
 def _measures(f: Finding) -> str:
-    return "; ".join(f"{k}={v}" for k, v in f.measures.items())
+    keys = CSV_MEASURES.get(f.check, tuple(f.measures))
+    return "; ".join(f"{k}={f.measures[k]}" for k in keys if f.measures.get(k, "") != "")
 
 
 def issues_text(report: RunReport, min_sev: int = 1) -> str:
