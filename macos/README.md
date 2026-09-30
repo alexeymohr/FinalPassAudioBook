@@ -1,8 +1,8 @@
 # FinalPass AudioBook — macOS app
 
 A small window over `fpab`: drop WAV files (or folders) in, press **Go**, get one CSV
-per WAV. Same findings and columns as `fpab check`'s issues.csv; a checkbox adds the
-pause map's rows.
+per WAV, the same as `fpab check --csv-per-file` writes: a summary, the problem events,
+then the informational events; a checkbox adds the pause map's rows.
 
 - **Sandboxed, no network.** App Sandbox is on and the app has no network entitlement,
   so macOS itself refuses every connection. The analysis engine (Python with fpab, its
@@ -11,21 +11,28 @@ pause map's rows.
   chopped-word model runs as numpy (no PyTorch), held to the audited torch code.
 - **Where CSVs go.** Next to each WAV as `<name>.csv` (macOS lets a sandboxed app
   create a same-name file beside one it was given), or into a folder you choose once.
+  A CSV the app did not write is never replaced: it asks once for that folder and
+  writes `<name> (2).csv`. A CSV that cannot be placed is kept and can be saved later.
 
 ## Build
 
+Needs macOS 14 or later, Xcode 26 or later (Swift 6; its `actool` compiles the Icon
+Composer app icon) and a uv-managed Python 3.12 (the script refuses any other).
+
 ```
-uv sync --extra truncation      # the repo's environment
+uv sync --managed-python        # the repo's environment
 uv run fpab setup-model         # the model weights, verified
-macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 185 MB)
+macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 180 MB)
 ```
 
 The script installs exactly the versions in `uv.lock`, copies the real Python
 interpreter (never through a link), precompiles it, refuses to continue if any link
-points outside the bundle, and signs everything ad hoc for this Mac.
+points outside the bundle, and signs everything ad hoc for this Mac. Other Macs would
+need Developer ID signing and notarization, which it does not do.
 
-Scripted check of a build (runs, writes the CSVs, quits; result in the app's container
-at `tmp/autorun_result.txt`):
+Scripted check (only in a build made with `macos/build_app.sh --test-hooks`; the normal
+build has no hook): runs, writes the CSVs, quits; result in the app's container at
+`tmp/autorun_result.txt`.
 
 ```
 open -W --env FPAB_AUTORUN=1 -a "macos/build/FinalPass AudioBook.app" a.wav b.wav

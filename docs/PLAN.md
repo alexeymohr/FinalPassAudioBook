@@ -180,7 +180,7 @@ A small SwiftUI window (`macos/`): drop WAVs or folders (not searched recursivel
 Go, a progress bar, one CSV per WAV beside it (`<name>.csv`) or in a chosen folder,
 optional pause rows. **Fully sandboxed with no network entitlement**; the engine
 (a copied Python with fpab, the `uv.lock` versions and the verified weights, about
-185 MB in all) is bundled and runs inside the sandbox. The sandbox allows only
+180 MB in all) is bundled and runs inside the sandbox. The sandbox allows only
 `<name>.csv` beside a WAV it was given, so where that would replace someone else's
 file (or two WAVs share it) the app asks once for that folder and writes
 `<name> (2).csv`. A CSV that cannot be placed is kept and can be saved later.

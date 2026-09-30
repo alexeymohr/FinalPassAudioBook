@@ -34,7 +34,8 @@ Breath analysis comes from [FinalPass](https://github.com/alexeymohr/FinalPass).
 
 ## Use
 
-A drag-and-drop macOS app (sandboxed, no network) is in [macos/](macos/README.md).
+Needs [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12 if needed) and git.
+Tested on macOS.
 
 ```
 uv sync                         # every check, including the chopped-word model
@@ -42,16 +43,29 @@ uv run fpab setup-model         # once: fetch and verify the model weights
 uv run fpab check path/to/chapters/ --out report/
 ```
 
-Writes `issues.txt`, `issues.csv`, `pauses.txt`, `pauses.csv` and `report.json`.
-Without the model installed, the chopped-word check is skipped with a note.
+`fpab check` takes WAV (or BWF) files and folders of them (not searched
+recursively); each file must be mono, or stereo with identical channels. It
+writes `issues.txt`, `issues.csv`, `pauses.txt`, `pauses.csv` and `report.json`
+to `--out` (default `./fpab-report`). `--csv-per-file` writes one CSV per WAV
+beside it (or into `--csv-dir`): a summary, the problem events, then the
+informational events; `--with-pauses` adds the pause map. `fpab check --help`
+lists every option. Without the model installed, the chopped-word check is
+skipped with a note. `fpab setup-model` is the only command that uses the
+network.
+
+A drag-and-drop macOS app (sandboxed, no network) that writes the same per-file
+CSVs builds from [macos/](macos/README.md).
+
+Tests use synthetic audio only: `uv run pytest`.
 
 The model is [`mythicinfinity/speech-truncation-detection-12M`](https://huggingface.co/mythicinfinity/speech-truncation-detection-12M)
 (Apache-2.0). It runs as our numpy port of its inference (no PyTorch); the
 upstream torch code is vendored unmodified at a pinned revision as the reference
-the port is tested against (`uv sync --extra truncation` installs it). The
-weights are verified against a recorded SHA-256 on every load and read without
-pickle or remote code.
+the port is tested against (`uv sync --extra truncation` installs PyTorch for
+those tests; runs never need it). The weights are verified against a recorded
+SHA-256 on every load and read without pickle or remote code.
 
 Plan and calibration notes: [docs/PLAN.md](docs/PLAN.md).
 
-License: MIT.
+License: MIT. The vendored model code keeps its Apache-2.0 licence
+(`src/finalpass_audiobook/vendor/speech_truncation/LICENSE`).
