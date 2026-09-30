@@ -72,3 +72,25 @@ def test_eight_bit_audio_skips_the_dropout_check_with_a_note(tmp_path: Path) -> 
     fr = _analyse(tmp_path, _narration(), subtype="PCM_U8")
     assert all(f.check != "dropout" for f in fr.findings)
     assert "dropout check skipped: 8-bit audio" in fr.notes
+
+
+def test_one_corrupt_sample_does_not_hide_a_hum_or_a_noisy_section(tmp_path: Path) -> None:
+    x = np.concatenate([_narration()] * 4)
+    t = np.arange(len(x)) / SR
+    x = x + 10 ** (-45 / 20) * np.sqrt(2) * np.sin(2 * np.pi * 60.0 * t)
+    x[len(x) // 2] = np.nan
+    fr = _analyse(tmp_path, x, subtype="FLOAT")
+    assert {"hum", "file"} <= {f.check for f in fr.findings}
+
+
+def test_a_header_off_by_less_than_a_frame_is_not_cut_short(tmp_path: Path) -> None:
+    import struct
+    p = tmp_path / "full.wav"
+    sf.write(str(p), _narration(), SR, subtype="PCM_16")
+    b = bytearray(p.read_bytes())
+    k = b.index(b"data") + 4
+    size = struct.unpack("<I", b[k:k + 4])[0]
+    b[k:k + 4] = struct.pack("<I", size + 1)                     # one byte of a two-byte frame
+    q = tmp_path / "plus1.wav"
+    q.write_bytes(bytes(b))
+    assert _file_events(analyze_file(q, RunOptions(truncation=False))) == []

@@ -48,10 +48,7 @@ final class RunModel {
     @ObservationIgnored private var taken = Set<String>()          // CSV paths used in this run (case-folded)
     @ObservationIgnored private var altFolders: [String: URL] = [:] // folder -> granted access, for "(2)" names
 
-    init() {
-        Self.sweepOldRuns()
-        Self.sweepUnsaved()
-    }
+    init() { Self.sweepOldRuns() }
 
     // MARK: files
 
@@ -75,8 +72,8 @@ final class RunModel {
                 found.append(url)
             }
         }
-        var known = Set(items.map { Placement.fold(Placement.realPath($0.url)) })
-        for url in found where known.insert(Placement.fold(Placement.realPath(url))).inserted {  // each file once
+        var known = Set(items.map { Self.identity($0.url) })
+        for url in found where known.insert(Self.identity(url)).inserted {         // each file once
             items.append(Item(url: url))
         }
         if links > 0 {
@@ -86,6 +83,15 @@ final class RunModel {
         } else if !items.isEmpty {
             status = "\(items.count) file\(items.count == 1 ? "" : "s") ready."
         }
+    }
+
+    /// The same file by any path (device and file number), or its resolved path if it cannot be looked at.
+    private static func identity(_ url: URL) -> String {
+        if let a = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let dev = a[.systemNumber] as? NSNumber, let ino = a[.systemFileNumber] as? NSNumber {
+            return "\(dev):\(ino)"
+        }
+        return Placement.realPath(url)
     }
 
     /// A regular file (not a folder, even one named "x.wav") with a WAV/BWF extension.
@@ -178,7 +184,6 @@ final class RunModel {
 
     func go() {
         guard canGo, quitWhenDone || confirmDiscard(unsavedCount, then: "Go") else { return }
-        items.forEach(discardKept)
         errorText = nil
         runNotes = []
         taken = []
@@ -204,6 +209,7 @@ final class RunModel {
             errorText = "Could not create a working folder: \(error.localizedDescription)"
             return
         }
+        items.forEach(discardKept)                  // agreed above; the run is about to start
         for i in items.indices {
             items[i].state = .waiting
             items[i].csv = nil
@@ -373,8 +379,8 @@ final class RunModel {
     }
 
     /// Where CSVs that could not be put in place wait to be saved: in the app's own storage, one
-    /// folder each (the name stays as it was). Emptied at launch: no run can reach them after a quit,
-    /// and quitting with unsaved reports asks first.
+    /// folder each (the name stays as it was). Any left when the app quits (or stops) are offered
+    /// again at the next launch.
     private static var unsavedRoot: URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Unsaved Reports", isDirectory: true)
@@ -408,8 +414,7 @@ final class RunModel {
         return alert.runModal() == .alertSecondButtonReturn
     }
 
-    /// Quitting: true when nothing unsaved would be lost, or the operator agrees.
-    func mayQuit() -> Bool { quitWhenDone || confirmDiscard(unsavedCount, then: "Quit") }
+
 
     /// Save every unsaved CSV into a folder the operator picks now.
     func saveUnsaved() {
@@ -490,17 +495,63 @@ final class RunModel {
         }
     }
 
-    /// Reports kept unsaved by an earlier session: nothing can reach them any more (the operator was
-    /// asked before quitting with any), and they name client files. A running copy's are left alone.
-    private static func sweepUnsaved() {
+    /// Reports an earlier session could not place (it quit or stopped first), not a running copy's.
+    private static func leftoverReports() -> (entries: [URL], csvs: [URL]) {
         let fm = FileManager.default
-        guard let root = unsavedRoot else { return }
-        for dir in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
-            if let text = try? String(contentsOf: dir.appendingPathComponent(ownerFile), encoding: .utf8),
-               let pid = Int32(text), pid != getpid(), kill(pid, 0) == 0 {
-                continue
+        guard let root = unsavedRoot else { return ([], []) }
+        var entries: [URL] = [], csvs: [URL] = []
+        for entry in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: entry.path, isDirectory: &isDir)
+            if isDir.boolValue {
+                if let text = try? String(contentsOf: entry.appendingPathComponent(ownerFile), encoding: .utf8),
+                   let pid = Int32(text), pid != getpid(), kill(pid, 0) == 0 {
+                    continue                                    // a running copy's
+                }
+                let inside = (try? fm.contentsOfDirectory(at: entry, includingPropertiesForKeys: nil)) ?? []
+                csvs += inside.filter { $0.pathExtension.lowercased() == "csv" }
+            } else if entry.pathExtension.lowercased() == "csv" {
+                csvs.append(entry)                              // kept by an earlier version, one level up
             }
-            try? fm.removeItem(at: dir)
+            entries.append(entry)
+        }
+        return (entries, csvs)
+    }
+
+    /// At launch: offer reports an earlier session could not place — they are never thrown away unasked.
+    func offerLeftoverReports() {
+        let (entries, csvs) = Self.leftoverReports()
+        guard !entries.isEmpty else { return }
+        let fm = FileManager.default
+        guard !csvs.isEmpty else { entries.forEach { try? fm.removeItem(at: $0) }; return }
+        let alert = NSAlert()
+        alert.messageText = "\(csvs.count) report\(csvs.count == 1 ? " was" : "s were") never saved."
+        alert.informativeText = "The app closed before \(csvs.count == 1 ? "it" : "they") could be placed. "
+            + "Save \(csvs.count == 1 ? "it" : "them") to a folder now, or discard \(csvs.count == 1 ? "it" : "them")."
+        alert.addButton(withTitle: "Save…")
+        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: "Discard")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            panel.prompt = "Save Here"
+            guard panel.runModal() == .OK, let dir = panel.url else { return }
+            var all = true
+            for csv in csvs {
+                let stem = csv.deletingPathExtension().lastPathComponent
+                let dest = (1...).lazy.map { k in dir.appendingPathComponent(k == 1 ? "\(stem).csv" : "\(stem) (\(k)).csv") }
+                    .first { !fm.fileExists(atPath: $0.path) && (try? fm.destinationOfSymbolicLink(atPath: $0.path)) == nil }!
+                if (try? fm.copyItem(at: csv, to: dest)) == nil { all = false }
+            }
+            if all { entries.forEach { try? fm.removeItem(at: $0) } }
+            status = all ? "Saved \(csvs.count) earlier report\(csvs.count == 1 ? "" : "s")." : "Some earlier reports could not be saved."
+        case .alertThirdButtonReturn:
+            entries.forEach { try? fm.removeItem(at: $0) }
+        default:
+            break                                               // Later: offered again next time
         }
     }
 }

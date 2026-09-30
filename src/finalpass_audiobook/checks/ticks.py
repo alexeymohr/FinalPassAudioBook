@@ -20,8 +20,9 @@ The shipped code on two chapters: 40/40 planted in pauses (-40 dBFS), 23/40 insi
 speech (-30 dBFS), nothing else listed. Whole title (41 files): none found. No
 real example has been heard yet.
 
-The step into and out of a dropout, or into the digital black at a clip end, is
-that event's own edge: a tick within 3 ms of one is not listed again (run.py).
+The step into and out of a dropout is the dropout's own edge: a tick within 3 ms
+of one is not listed again; a word that ends in a tick where its clip stops is
+listed once, as the tick (run.py).
 """
 from __future__ import annotations
 

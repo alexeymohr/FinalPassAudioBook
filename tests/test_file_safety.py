@@ -161,3 +161,39 @@ def test_one_file_named_twice_is_checked_once(tmp_path: Path) -> None:
     r = _check("--csv-per-file", "--progress", "jsonl", str(a), str(tmp_path / "in"), str(tmp_path / "in" / "." / "ch01.wav"))
     assert r.exit_code == 0 and len(_done(r)) == 1
     assert sorted(p.name for p in (tmp_path / "in").glob("*.csv")) == ["ch01.csv"]
+
+
+def test_a_csv_that_appears_during_the_run_is_not_replaced(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.run as run_mod
+    a, b = _wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")
+    real = run_mod.analyze_file
+
+    def analyze(path, *args, **kw):        # noqa: ANN001, ANN002, ANN003, ANN202
+        if path.name == "a.wav":
+            (tmp_path / "b.csv").write_text("my notes, saved mid-run\n")
+        return real(path, *args, **kw)
+    monkeypatch.setattr(run_mod, "analyze_file", analyze)
+    assert _check("--csv-per-file", str(a), str(b)).exit_code == 0
+    assert (tmp_path / "b.csv").read_text() == "my notes, saved mid-run\n"
+    assert report_source(tmp_path / "b (2).csv")[0] == "b.wav"
+
+
+def test_a_report_without_a_folder_is_kept_away_from_its_wav(tmp_path: Path) -> None:
+    """A CSV an earlier version wrote into a shared folder cannot say which book it was for."""
+    a = _wav(tmp_path / "bookA" / "ch01.wav")
+    out = tmp_path / "csvs"
+    out.mkdir()
+    old = "FinalPass AudioBook report,0.0.9\r\nfile,ch01.wav\r\n,,,,,,\r\n".encode("utf-8-sig")
+    (out / "ch01.csv").write_bytes(old)
+    assert _check("--csv-dir", str(out), str(a)).exit_code == 0
+    assert (out / "ch01.csv").read_bytes() == old and is_ours(out / "ch01 (2).csv")
+
+
+def test_a_name_starting_with_an_apostrophe_reads_back(tmp_path: Path) -> None:
+    from finalpass_audiobook.output import _uncell
+    for name in ("'-01.wav", "'plain.wav", "-01.wav", "=01.wav", "ch01.wav"):
+        assert _uncell(_cell(name)) == name
+    a = _wav(tmp_path / "'-01.wav")
+    for _ in range(2):
+        assert _check("--csv-per-file", str(a)).exit_code == 0
+    assert sorted(p.name for p in tmp_path.glob("*.csv")) == ["'-01.csv"]

@@ -211,12 +211,12 @@ def replaceable(target: Path, wav: Path) -> bool:
     if name and name_key(name) != name_key(wav.name):
         return False
     here = _real(wav).parent
-    if folder and name_key(_real(target).parent) != name_key(here) and name_key(folder) != name_key(here):
-        return False
+    if name_key(_real(target).parent) != name_key(here) and name_key(folder) != name_key(here):
+        return False                  # away from the WAV, only a report that names this WAV's folder
     return True
 
 
-_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "'")   # "'" too, so the guard always reads back
 
 
 def _cell(value) -> str:        # noqa: ANN001

@@ -57,6 +57,8 @@ class RunOptions:
 
 MIN_DURATION_S = 1.0                     # shorter than this cannot be a chapter
 _DATA_SIZE = re.compile(r"^data\s*:\s*(\d+)\s*\(should be (\d+)\)", re.MULTILINE)
+_BLOCK_ALIGN = re.compile(r"Block Align\s*:\s*(\d+)")
+SHORT_EVENTS = ("dropout", "ticks", "clicks", "plosive", "truncation")   # what a zeroed NaN run can cause
 
 
 def _audio_info(path: Path) -> tuple[str, str]:
@@ -82,7 +84,9 @@ def _file_findings(ch: Chapter, header_log: str) -> list[Finding]:
         out.append(_file_event(ch, a, b, f"file contains {ch.invalid_samples.size} invalid (NaN/Inf) samples — "
                                          "corrupt audio", invalid_samples=int(ch.invalid_samples.size)))
     m = _DATA_SIZE.search(header_log)
-    if m and int(m.group(2)) < int(m.group(1)) < 0x7FFFFFFF:     # 0 / 0xFFFFFFFF: a header never finished
+    frame = int(b.group(1)) if (b := _BLOCK_ALIGN.search(header_log)) else 1
+    # short by at least one whole frame (less loses no audio); 0 / 0xFFFFFFFF: a header never finished
+    if m and int(m.group(2)) + max(1, frame) <= int(m.group(1)) < 0x7FFFFFFF:
         out.append(_file_event(ch, n, n, "file is cut short: its audio ends before its header says it should",
                                data_bytes=int(m.group(2)), header_bytes=int(m.group(1))))
     if ch.duration_s < MIN_DURATION_S:
@@ -94,14 +98,15 @@ def _file_findings(ch: Chapter, header_log: str) -> list[Finding]:
 
 
 def _clear_of_invalid(findings: list[Finding], ch: Chapter, pad_s: float = 0.005) -> list[Finding]:
-    """Drop what the zeroed NaN/Inf samples themselves caused (a hole, its edges): the file event covers it."""
+    """Drop the short events the zeroed NaN/Inf samples themselves caused (a hole, its edges): the file
+    event covers them. Long events (a hum, a noisy section, a breath) stand."""
     bad, pad = ch.invalid_samples, int(pad_s * ch.sr)
     if not bad.size:
         return findings
     def near(f: Finding) -> bool:            # noqa: E306
         k = np.searchsorted(bad, f.start_sample - pad)
         return k < bad.size and bad[k] <= f.end_sample + pad
-    return [f for f in findings if f.check == "file" or not near(f)]
+    return [f for f in findings if f.check not in SHORT_EVENTS or not near(f)]
 
 
 def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None) -> FileResult:
@@ -141,18 +146,19 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     say("clicks")
     clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise, act.first_sound, act.last_sound)
     say("ticks")
-    ends = clip_ends(ch, opts.truncation_tunables)
     near = int(0.003 * ch.sr)
-    # The step into and out of a dropout, or into the digital black at a clip end, is that event's
-    # own edge, not a separate tick; a digital tick in a pause is listed once, as the tick.
-    edges = [e for d in dropouts for e in (d.start_sample, d.end_sample)] + list(ends)
+    # The step into and out of a dropout is the dropout's own edge, not a separate tick; a digital
+    # tick in a pause is listed once, as the tick.
+    edges = [e for d in dropouts for e in (d.start_sample, d.end_sample)]
     ticks = [k for k in tick_findings(ch, opts.ticks) if all(abs(k.start_sample - e) > near for e in edges)]
     findings += [c for c in clicks if all(abs(c.start_sample - k.start_sample) > near for k in ticks)] + ticks
     records: list[dict] = []
     if model is not None:
         say("chopped words")
-        records = score_phrase_ends(ch, ends, model, opts.truncation_tunables)
-        findings += truncation_findings(ch, records)
+        records = score_phrase_ends(ch, clip_ends(ch, opts.truncation_tunables), model, opts.truncation_tunables)
+        # a word that ends in a digital tick is listed once, as the tick (the worse of the two)
+        findings += [f for f in truncation_findings(ch, records)
+                     if all(abs(f.start_sample - k.start_sample) > near for k in ticks)]
     findings = _clear_of_invalid(findings, ch)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
     counts = {"breaths": breaths.counts.breaths,

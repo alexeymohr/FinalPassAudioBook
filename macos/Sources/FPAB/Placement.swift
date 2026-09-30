@@ -47,14 +47,17 @@ enum Placement {
     /// A symlink is never ours: nothing is written through one.
     static func kind(of url: URL, for wav: URL) -> Existing {
         let fm = FileManager.default
-        if let type = try? fm.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType, type == .typeSymbolicLink {
-            return .foreign
+        guard let type = (try? fm.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType else {
+            return fm.fileExists(atPath: url.path) ? .foreign : .none
         }
-        guard fm.fileExists(atPath: url.path) else { return .none }
+        guard type == .typeRegular else { return .foreign }          // a link, a folder, a pipe: never ours
+        let here = realPath(wav.deletingLastPathComponent())
+        let away = fold(realPath(url.deletingLastPathComponent())) != fold(here)
         if let sig = signature(url), let record = written()[url.path] {
             let parts = record.split(separator: "\t", maxSplits: 1).map(String.init)
             if parts.first == sig {
-                return parts.count < 2 || sameFile(parts[1], wav.path) ? .ours : .foreign
+                if parts.count > 1 { return sameFile(parts[1], wav.path) ? .ours : .foreign }
+                return away ? .foreign : .ours                         // an older record: no WAV noted
             }
         }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return .foreign }
@@ -63,7 +66,7 @@ enum Placement {
         if text.hasPrefix("\u{FEFF}") { text.removeFirst() }
         let rows = csvRows(text, limit: 40)
         guard let first = rows.first else { return .foreign }
-        if first.joined(separator: ",") == legacyHeader { return .ours }
+        if first.joined(separator: ",") == legacyHeader { return away ? .foreign : .ours }
         guard first.first == reportMarker else { return .foreign }
         var facts: [String: String] = [:]
         for row in rows.dropFirst() {
@@ -71,11 +74,8 @@ enum Placement {
             if facts[row[0]] == nil { facts[row[0]] = row.count > 1 ? uncell(row[1]) : "" }
         }
         if let name = facts["file"], !name.isEmpty, fold(name) != fold(wav.lastPathComponent) { return .foreign }
-        let here = realPath(wav.deletingLastPathComponent())
-        if let folder = facts["folder"], !folder.isEmpty,
-           fold(realPath(url.deletingLastPathComponent())) != fold(here), fold(folder) != fold(here) {
-            return .foreign
-        }
+        // away from the WAV, only a report that names this WAV's folder (an older one names none)
+        if away && fold(facts["folder"] ?? "") != fold(here) { return .foreign }
         return .ours
     }
 
@@ -111,10 +111,12 @@ enum Placement {
         NSFileCoordinator(filePresenter: presenter).coordinate(writingItemAt: target, options: .forReplacing,
                                                                 error: &coordinationError) { url in
             // In place (the sandbox allows no temporary sibling). A write that fails part-way must not
-            // leave a cut-off report that reads as ours: remove it; the full CSV is kept by the app.
+            // leave a cut-off report that reads as ours: remove it — only if the write touched the file
+            // (a refusal before writing leaves the old report). The full CSV is kept by the app.
+            let before = signature(url)
             do { try data.write(to: url) } catch {
                 writeError = error
-                try? FileManager.default.removeItem(at: url)
+                if signature(url) != before { try? FileManager.default.removeItem(at: url) }
             }
         }
         if let error = coordinationError ?? writeError { throw error }
@@ -165,7 +167,7 @@ enum Placement {
 
     /// A cell as the engine wrote it: a leading ' only guards a formula-looking value.
     private static func uncell(_ s: String) -> String {
-        guard s.hasPrefix("'"), let next = s.dropFirst().first, "=+-@\t\r".contains(next) else { return s }
+        guard s.hasPrefix("'"), let next = s.dropFirst().first, "=+-@\t\r'".contains(next) else { return s }
         return String(s.dropFirst())
     }
 

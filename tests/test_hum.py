@@ -136,3 +136,20 @@ def test_pieces_of_one_hum_join_whichever_way_their_frequencies_round() -> None:
         a = _Track(first=0, last=16, freqs=[f1] * 17, levels=[-60.0] * 17, proms=[20.0] * 17)
         b = _Track(first=20, last=36, freqs=[f2] * 17, levels=[-60.0] * 17, proms=[20.0] * 17)
         assert len(_join([a, b], HumTunables())) == 1
+
+
+def test_a_building_hum_is_shown_and_graded_at_the_level_it_reaches() -> None:
+    x = _speech(30.0)
+    t = np.arange(len(x)) / SR
+    ramp = np.clip((t - 2.0) / 26.0, 0, 1)
+    x = x + 10 ** ((-80 + 35 * ramp) / 20) * np.sqrt(2) * np.sin(2 * np.pi * 60.0 * t) * (t >= 2.0)
+    (f,) = hum_findings(chapter(x))
+    assert "building" in f.problem and f.problem.split("→ ")[1].startswith(("-45", "-46", "-44"))
+    assert f.severity >= 2 and f.measures["level_dbfs"] >= -47
+
+
+def test_a_held_voiced_note_is_not_confirmed_in_gaps_as_a_hum() -> None:
+    """A line as loud as the voice never takes the filled-gap route."""
+    from finalpass_audiobook.checks.hum import HumTunables, _filled_gaps
+    ch = chapter(_speech(10.0))
+    assert _filled_gaps(ch, HumTunables(), 0.0, 10.0, ch.narration_dbfs - 2.0) == []

@@ -58,8 +58,9 @@ events, then the informational events; `--with-pauses` adds the pause map. A CSV
 is replaced only when it is this tool's report for the same WAV — otherwise the
 new one is `<name> (2).csv`. `fpab check --help` lists every option. Without the
 model installed, the chopped-word check is skipped with a note. It exits 1 when a
-file was skipped or a report could not be written. `fpab setup-model` is the only
-command that uses the network.
+file was skipped or a report could not be written (`--progress jsonl`, which the
+app uses, reports that per file instead). `fpab setup-model` is the only command
+that uses the network.
 
 A drag-and-drop macOS app (sandboxed, no network) that writes the same per-file
 CSVs builds from [macos/](macos/README.md).

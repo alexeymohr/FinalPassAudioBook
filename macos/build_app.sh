@@ -69,6 +69,7 @@ swift build -c release --package-path "$HERE" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]
 BIN="$(swift build -c release --package-path "$HERE" ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} --show-bin-path)/FPAB"
 mkdir -p "$APP/Contents/MacOS" "$ENGINE/model"
 cp "$BIN" "$APP/Contents/MacOS/FPAB"
+strip -S -x "$APP/Contents/MacOS/FPAB"      # debug records name the source folder; signed with the app below
 cp "$HERE/Resources/Info.plist" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 
@@ -107,7 +108,7 @@ uv pip install --python "$PY" --break-system-packages --no-deps --exclude-newer 
 # pip's record of where fpab was installed from names this Mac's folders; the app does not need it
 for d in "$ENGINE"/python/lib/python3.12/site-packages/finalpass_audiobook-*.dist-info; do
     rm -f "$d/direct_url.json"
-    sed -i '' '/direct_url.json/d' "$d/RECORD"
+    /usr/bin/sed -i '' '/direct_url.json/d' "$d/RECORD"     # BSD sed (a GNU sed first in PATH reads -i differently)
 done
 
 say "Model weights (the one verified file, nothing else from the cache)"
@@ -202,7 +203,9 @@ for root, _, files in os.walk(engine):
                                doraise=True)
 PYC
 echo "compiled modules: $(find "$ENGINE" -name '*.pyc' | wc -l | tr -d ' ')"
-leaked="$(grep -rl -e "$HOME" "$ENGINE" 2>/dev/null | head -5 || true)"   # grep finds none: exit 1
+# The folders this build read from, as fixed strings (third-party files name their own build machines).
+leaked="$(grep -rlF -e "$REPO" -e "$PY_ROOT" -e "$MODEL_SRC" -e "$HOME/.cache" -e "$HOME/.local" "$APP" 2>/dev/null \
+          | head -5 || true)"                                   # grep finds none: exit 1
 [ -z "$leaked" ] || { echo "$leaked"; die "the app would carry this Mac's folder names"; }
 
 say "Guard: no link may lead outside the bundle or nowhere"

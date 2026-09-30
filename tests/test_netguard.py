@@ -35,6 +35,9 @@ ROUTES = {
     "ctypes lookup by handle": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "connect"),
     "ctypes libcurl": lambda: ctypes.CDLL("libcurl.4.dylib"),
     "ctypes curl function": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "curl_easy_perform"),
+    "ctypes execvP": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "execvP"),
+    "ctypes async lookup": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "getaddrinfo_async_start"),
+    "ctypes DNS service": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "DNSServiceGetAddrInfo"),
 }
 
 

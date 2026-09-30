@@ -115,3 +115,31 @@ def test_a_dropout_is_listed_once_not_again_as_ticks_at_its_edges(tmp_path) -> N
     sf.write(p, x, SR, subtype="PCM_24")
     near = [f.check for f in analyze_file(p, RunOptions(truncation=False)).findings if abs(f.start_sample - at) < 0.05 * SR]
     assert near == ["dropout"]
+
+
+def test_a_tick_in_digital_black_is_still_a_tick(tmp_path) -> None:        # noqa: ANN001
+    """Black follows the spike itself: that is not a clip end that could excuse it."""
+    import soundfile as sf
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    x = np.concatenate([_band_limited(phrase(4)), np.zeros(SR), _band_limited(phrase(4)), np.zeros(int(0.5 * SR))])
+    at = len(phrase(4)) + int(0.3 * SR)
+    x[at] = 10 ** (-40 / 20)
+    p = tmp_path / "c.wav"
+    sf.write(p, x, SR, subtype="PCM_24")
+    ticks = [f for f in analyze_file(p, RunOptions(truncation=False)).findings if f.check == "ticks"]
+    assert len(ticks) == 1 and abs(ticks[0].start_sample - at) <= 2
+
+
+def test_a_word_that_ends_in_a_tick_is_listed_once_as_the_tick(tmp_path) -> None:        # noqa: ANN001
+    import soundfile as sf
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    from test_truncation_model_cli import _FakeModel
+    word_end = len(phrase(4)) - int(0.2 * SR)
+    x = np.concatenate([_band_limited(phrase(4))[:word_end], np.zeros(int(0.7 * SR)), _band_limited(phrase(4)),
+                        np.zeros(int(0.5 * SR))])
+    x[word_end - 1] = 0.25                                        # the cut clicks
+    p = tmp_path / "c.wav"
+    sf.write(p, x, SR, subtype="PCM_24")
+    fr = analyze_file(p, RunOptions(), model=_FakeModel([0.999, 0.999]))
+    at_cut = [f.check for f in fr.findings if abs(f.start_sample - word_end) < 0.003 * SR]
+    assert at_cut == ["ticks"]

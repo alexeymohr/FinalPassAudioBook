@@ -16,7 +16,7 @@ included — and counts:
   fork, exec…, whichever lookup call is used.
 
 It is a guard inside Python, not a sandbox: it sees what goes through the
-interpreter. Native code that calls the operating system directly, or a socket
+interpreter, and its ctypes lists name the common routes, not every one. Native code that calls the operating system directly, or a socket
 opened before the guard (a run opens none), is beyond it — and code in the same
 process could switch it off. The macOS app's OS sandbox (no network entitlement)
 is the hard boundary; the command line can be run under an OS sandbox too (see
@@ -47,11 +47,14 @@ _PROCESS_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.p
 _NET_SYMBOLS = {"connect", "connectx", "send", "sendto", "sendmsg", "sendmsg_x", "socket", "bind",
                 "getaddrinfo", "gethostbyname", "gethostbyname2", "gethostbyaddr", "getnameinfo",
                 "res_query", "res_search", "res_send",
+                "getaddrinfo_async_start", "getaddrinfo_async_handle_reply",
                 # starting a process from C: as good as a way out
-                "system", "popen", "fork", "vfork", "execv", "execve", "execvp", "execvpe", "execl", "execle",
-                "execlp", "posix_spawn", "posix_spawnp"}
-_NET_SYMBOL_PREFIXES = ("curl_", "SSL_", "nw_", "CFSocket", "CFStream", "CFHost", "CFNetwork", "CFURL")
-_NET_LIBRARIES = ("curl", "libssl", "libcrypto", "cfnetwork", "network.framework", "libresolv")
+                "system", "popen", "fork", "vfork", "execv", "execve", "execvp", "execvP", "execvpe", "execl",
+                "execle", "execlp", "posix_spawn", "posix_spawnp"}
+_NET_SYMBOL_PREFIXES = ("curl_", "SSL_", "nw_", "DNSService", "CFSocket", "CFStream", "CFHost", "CFNetwork",
+                        "CFURL", "CFReadStreamCreateFor", "CFWriteStreamCreateFor")
+_NET_LIBRARIES = ("curl", "libssl", "libcrypto", "cfnetwork", "network.framework", "libresolv", "coreservices",
+                  "libsystem_dnssd")
 
 _lock = threading.Lock()
 _active: list["NetworkGuard"] = []

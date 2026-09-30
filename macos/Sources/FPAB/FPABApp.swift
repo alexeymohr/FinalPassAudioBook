@@ -28,11 +28,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if FPAB_TEST_HOOKS
+        if ProcessInfo.processInfo.environment["FPAB_AUTORUN"] == "1" { return }     // never a modal in a scripted run
+        #endif
+        model.offerLeftoverReports()
+    }
+
+    /// Unsaved reports are not lost on quitting: they are offered again at the next launch.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard model.running else { return model.mayQuit() ? .terminateNow : .terminateCancel }
+        guard model.running else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "A check is still running."
-        alert.informativeText = "Quit now and stop it? Files already finished keep their CSVs."
+        alert.informativeText = "Quit now and stop it? Files already finished keep their CSVs; reports not yet "
+            + "saved are offered again when the app next opens."
         alert.addButton(withTitle: "Keep Running")
         alert.addButton(withTitle: "Quit")
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel

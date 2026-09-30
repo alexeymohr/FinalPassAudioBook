@@ -17,16 +17,21 @@ AUDIO_SUFFIXES = {".wav", ".bwf"}       # FinalPass's reader refuses ".wave"
 
 
 def _expand(paths: tuple[Path, ...]) -> list[Path]:
-    """Files, and the audio files in folders (not searched recursively); each file once."""
-    from .output import _real, name_key
+    """Files, and the audio files in folders (not searched recursively); each file once (the same file
+    by any path; a file that cannot be looked at, by its resolved path)."""
+    from .output import _real
 
     files: list[Path] = []
-    seen: set[str] = set()
+    seen: set = set()
     for p in paths:
         found = (sorted(q for q in p.iterdir() if q.suffix.lower() in AUDIO_SUFFIXES and not q.name.startswith("."))
                  if p.is_dir() else [p])
         for q in found:
-            key = name_key(_real(q))
+            try:
+                st = q.stat()
+                key = (st.st_dev, st.st_ino)
+            except OSError:
+                key = str(_real(q))
             if key not in seen:
                 seen.add(key)
                 files.append(q)
@@ -39,26 +44,32 @@ def main() -> None:
     """FinalPassAudioBook: local, offline QC for audiobook chapters."""
 
 
-def _csv_targets(files: list[Path], csv_dir: Path | None, reserved: tuple[Path, ...] = ()) -> list[Path]:
-    """Where each file's CSV goes: beside the WAV, or into csv_dir. A name already taken in this run
-    (or by the run report), held by something other than this tool's report for that same WAV, or
-    that another audio file in the folder would use as its own, gets " (2)", " (3)", … — nothing is
-    replaced but our own report for the same WAV."""
-    from .output import _real, csv_name, name_key, replaceable
+def _pick(first: Path, wav: Path, seen: set[str]) -> Path:
+    """`first`, or the first of `first (2)`, `(3)`, … that is not taken in this run (`seen`), not
+    another audio file's own CSV name there, and holds nothing but this tool's report for `wav`."""
+    from .output import _real, name_key, replaceable
 
     def audio_named(folder: Path, stem: str) -> bool:
         return any((folder / f"{stem}{s}").exists() for s in (*AUDIO_SUFFIXES, *(x.upper() for x in AUDIO_SUFFIXES)))
 
-    out, seen = [], {name_key(_real(p)) for p in reserved}
-    for f in files:
-        first = (csv_dir or f.parent) / csv_name(f)
-        target, k = first, 2
-        while name_key(_real(target)) in seen or not replaceable(target, f):
+    target, k = first, 2
+    while name_key(_real(target)) in seen or not replaceable(target, wav):
+        target = first.with_name(f"{first.stem} ({k}){first.suffix}")
+        k += 1
+        while audio_named(target.parent, target.stem):
             target = first.with_name(f"{first.stem} ({k}){first.suffix}")
             k += 1
-            while audio_named(target.parent, target.stem):
-                target = first.with_name(f"{first.stem} ({k}){first.suffix}")
-                k += 1
+    return target
+
+
+def _csv_targets(files: list[Path], csv_dir: Path | None, reserved: tuple[Path, ...] = ()) -> list[Path]:
+    """Where each file's CSV goes: beside the WAV, or into csv_dir (see `_pick`) — nothing is replaced
+    but our own report for the same WAV. `reserved`: the run report's files."""
+    from .output import _real, csv_name, name_key
+
+    out, seen = [], {name_key(_real(p)) for p in reserved}
+    for f in files:
+        target = _pick((csv_dir or f.parent) / csv_name(f), f, seen)
         seen.add(name_key(_real(target)))
         out.append(target)
     return out
@@ -105,7 +116,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     import json
 
     from .model import installed
-    from .output import RUN_FILES, file_csv, tally, write
+    from .output import RUN_FILES, _real, csv_name, file_csv, name_key, replaceable, run_report_clashes, tally, write
     from .run import STAGES, RunOptions, run
 
     files = _expand(paths)
@@ -120,6 +131,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         sys.exit(2)
     reserved = tuple(out_dir / n for n in RUN_FILES) if out_dir is not None else ()
     targets = _csv_targets(files, csv_dir, reserved) if per_file else []
+    planned = {name_key(_real(p)) for p in (*reserved, *targets)}
     opts = RunOptions(rules=RULE_SETS[rules_name], truncation=not no_truncation)
     jsonl = progress_mode == "jsonl"
     say = err if jsonl else out
@@ -145,6 +157,9 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         csv_path = None
         if per_file and fr.sample_rate:
             try:
+                if not replaceable(targets[i], files[i]):    # something appeared there during the run
+                    targets[i] = _pick((csv_dir or files[i].parent) / csv_name(files[i]), files[i], planned)
+                    planned.add(name_key(_real(targets[i])))
                 csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
             except Exception as exc:        # an unwritable CSV is a note on this file, not the end of the run
                 fr.notes.append(f"could not write the CSV: {exc}")
@@ -167,7 +182,10 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
             report = run(files, opts, progress=lambda i, n, p: status.update(f"Checking {i + 1}/{n}: {p.name}"),
                          file_done=file_done, model_loaded=model_loaded)
     written, report_error = [], None
-    if out_dir is not None:
+    if out_dir is not None and (clash := run_report_clashes(out_dir)):          # appeared during the run
+        report_error = (f"did not write the run report: {out_dir} now holds "
+                        f"{', '.join(p.name for p in clash)}, which this tool did not write")
+    elif out_dir is not None:
         try:
             written = write(report, out_dir, min_sev)
         except Exception as exc:            # the files are analysed: still print what was found

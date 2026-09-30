@@ -14,7 +14,8 @@ then the informational events; a checkbox adds the pause map's rows.
   A CSV is replaced only when it is this app's report for the same WAV (so two books'
   "Chapter 01" never share one); otherwise it asks once for that folder and writes
   `<name> (2).csv`. A CSV that cannot be placed is kept in the app until you save it
-  ("Save Unsaved CSVs…"); the app asks before Go, Remove, Clear or Quit discard it.
+  ("Save Unsaved CSVs…"); the app asks before Go, Remove or Clear discard it, and any
+  still unsaved when the app quits are offered again at the next launch.
 
 ## Build
 

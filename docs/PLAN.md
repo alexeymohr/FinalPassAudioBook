@@ -101,7 +101,7 @@ edges of all 12 hums on the calibration title): 1 for a low-level hum, most of t
 2 when strong (loudest line ≥ −55 dBFS; the two called strong measured −53.8 and
 −54.3, the loudest of the rest −55.5); 3 when strong and it starts or cuts off
 abruptly. On that title: 2 at severity 3, 10 at 1. Graded on the whole-dB level the
-text shows.
+text shows; a hum that builds, on the level it reaches.
 - Tracked in 2 s windows (a line ≥ 10 dB over its ±10 Hz neighbourhood, held within
   1 Hz for ≥ 3 s; pieces of one line up to 3 s apart joined). A tracked line must
   also be heard in a nearby pause, unless there are no pauses around it (a hum
@@ -109,7 +109,8 @@ text shows.
   calibration title; the operator heard only 1 as hum — the only one also present
   in a pause. A hum loud enough to fill the pauses inside it but not those around it
   (it starts and stops mid-chapter) is heard in the gaps it fills instead (≥ 0.4 s,
-  ≥ 15 dB under the narration, within 6 dB of the hum): synthetic hums of −45 and
+  ≥ 15 dB under the narration, within 6 dB of the hum, the line as loud there as under
+  the words; not for a line within 15 dB of the narration, a held note): synthetic hums of −45 and
   −40 dBFS for 4-50 s were otherwise missed or listed only as noise; the calibration
   title still lists its 12 hums and nothing more.
 - Found in the pauses (speech hides lines in the voice's range): the same line in
@@ -182,8 +183,9 @@ when it is extremely short (≤ 8 samples at 44.1 kHz, at half its peak), loud
 tick inside a consonant blends in. Evidence: 32 candidates from a looser rule were
 all consonants by ear; this rule lists none on the whole title (41 files). Planted
 one-sample spikes: 100 % found in pauses at −40 dBFS, about half inside speech at
-−30 dBFS. No real example has been heard yet. The step into and out of a dropout, or
-into the digital black of a clip end, is that event's own edge and is not listed again.
+−30 dBFS. No real example has been heard yet. The step into and out of a dropout is
+the dropout's own edge and is not listed again; a word that ends in a tick where its
+clip stops is listed once, as the tick.
 
 ### 3.9 Pause map (informational)
 
@@ -194,9 +196,10 @@ The guess reads the length as listed (0.01 s).
 ### 3.10 File problems
 
 Severity 3, so an unusable file never reads as clean: invalid (NaN/Inf) samples
-(zeroed for the analysis; what they cause is not listed again, and a NaN in one
-channel of dual mono counts too), audio data that ends before its header says, no
-narration found, or a file under 1 s.
+(zeroed for the analysis; the short events that causes — a dropout, ticks — are not
+listed again, and a NaN in one channel of dual mono counts too), audio data that ends
+at least one frame before its header says (RF64/W64 not yet covered), no narration
+found, or a file under 1 s.
 
 ## 4. macOS app
 
@@ -213,7 +216,8 @@ locked dependencies and hash-pinned build backends, removes the building Mac's
 folder names from what it bundles (and refuses to finish if any remain), signs
 every Mach-O, asserts exact entitlements and moves the app into place only when all
 checks pass. The app never replaces a CSV it did not write for that WAV; reports it
-could not place are kept until saved, and it asks before discarding them.
+could not place are kept until saved, it asks before discarding them, and any left
+when it quits are offered again at the next launch.
 
 ## 5. Safety and dependencies
 
