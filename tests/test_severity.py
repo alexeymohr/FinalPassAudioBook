@@ -241,10 +241,10 @@ def test_a_hum_is_described_from_its_pauses_with_every_line() -> None:
     assert len(found) == 1
     f = found[0]
     import re
-    m = re.match(r"hum at ([\d.]+) Hz and ([\d.]+) Hz", f.problem)
+    m = re.match(r"hum ([\d.]+) \+ ([\d.]+) Hz", f.problem)
     assert m and abs(float(m[1]) - 43.0) < 0.3 and abs(float(m[2]) - 99.0) < 0.3, f.problem
     assert f.measures["harmonics_hz"].split(",")[0] == "86"
-    assert "other steady lines at 142, 185 Hz in the pauses" in f.problem
+    assert f.measures["other_lines_hz"] == "142,185"
 
 
 def test_a_hum_cut_on_the_next_word_is_named() -> None:

@@ -85,8 +85,8 @@ def breath_loudness_severity(loudness_db: float, s: BreathSeverity = BreathSever
 
 
 MOUTH_CLICK_TEXT = {
-    3: "mouth-click inhale: a click after a pause, before the inhale",
-    2: "small mouth-click inhale: a click after a pause, before the inhale",
+    3: "mouth-click inhale",
+    2: "small mouth-click inhale",
 }
 
 

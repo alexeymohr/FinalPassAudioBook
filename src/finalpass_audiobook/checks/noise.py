@@ -147,11 +147,11 @@ def noise_findings(ch: Chapter, t: NoiseTunables = NoiseTunables(),
         if np.isfinite(speech):
             gap = round(speech - level, 1)
             severity = 3 if gap < t.sev3_under_gap_db else 2 if gap < t.sev2_under_gap_db else 1
-            text = f"noisy section: noise floor about {level:.1f} dBFS, {gap:.1f} dB under the speech"
+            text = f"noisy section: floor {level:.1f} dBFS, {gap:.1f} dB under speech"
         else:                           # no narration to compare with: the dBFS equivalents of the ladder
             gap = None
             severity = 3 if level >= t.fallback_sev3_dbfs else 2 if level >= t.fallback_sev2_dbfs else 1
-            text = f"noisy section: noise floor about {level:.1f} dBFS (no narration measured in this file)"
+            text = f"noisy section: floor {level:.1f} dBFS (no narration in this file)"
         out.append(Finding(
             file=ch.name, check="noise", start_sample=s, end_sample=e,
             start_time=ch.clock(s), end_time=ch.clock(e), severity=severity, problem=text,

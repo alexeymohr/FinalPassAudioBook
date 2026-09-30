@@ -98,7 +98,8 @@ abruptly. On that title: 2 at severity 3, 10 at 1.
   ≥ 2 pauses over ≥ 3 s, at least −70 dBFS (operator's floor). Evidence: 11 found,
   all 11 confirmed by ear.
 - Described from its pauses: every steady line there, loudest first, harmonics
-  named. Start and end from the tone's own level; "starts/cuts off abruptly" when
+  named (in the measures; the event text stays short: the tone or tones, level and
+  edges, e.g. "hum 58.8 Hz, -70 dBFS, cuts off abruptly"). Start and end from the tone's own level; "starts/cuts off abruptly" when
   it changes by ≥ 20 dB in 0.5 s from full level, or — when the cut lands on a
   word — by ≥ 10 dB in 0.2 s and the line is gone from the next pause. Heard blind
   on all 24 edges: 6 of the 8 claimed abrupt were; 2 of the 16 others were abrupt

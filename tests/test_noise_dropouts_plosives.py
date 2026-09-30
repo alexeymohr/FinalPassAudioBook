@@ -206,4 +206,4 @@ def test_a_listed_hum_is_not_also_a_noisy_section() -> None:
 def test_noise_in_a_file_without_speech_says_so() -> None:
     x = RNG.standard_normal(SR * 10) * 10 ** (-40 / 20)
     (f,) = noise_findings(chapter(x))[0]
-    assert "no narration measured" in f.problem and f.severity == 3
+    assert "no narration in this file" in f.problem and f.severity == 3

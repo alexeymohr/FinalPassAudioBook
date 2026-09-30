@@ -35,7 +35,8 @@ the narration): each steady line >= 12 dB over its ±10 Hz neighbourhood and
 within 30 dB of the hum, present in at least half of them, is listed — lines
 about as loud as the hum in the headline, whole multiples as harmonics, the rest
 as "other steady lines". On the operator's confirmed two-tone example this lists
-both tones, their harmonics, the sum and difference tones, and the cut.
+both tones, their harmonics, the sum and difference tones, and the cut. The event
+text names only the tones, level and edges; harmonics and other lines are measures.
 
 A cut that lands on the next word is named when a listed line falls >= 10 dB
 within 0.2 s from its full level and sits >= 20 dB lower in the next pause. For
@@ -514,18 +515,12 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
                 break
             ws, we = _word_cut(y, fs, t, f, lv, start_s, end_s, pauses)
             cut_start, cut_end = cut_start or ws, cut_end or we
-    names = " and ".join(f"{f:.1f} Hz" for f, _ in heads)
-    extra = []
-    if d["harmonics"]:
-        extra.append(f"harmonics at {', '.join(str(h) for h in d['harmonics'])} Hz")
-    if d["other"]:
-        extra.append(f"other steady lines at {', '.join(str(round(f)) for f, _ in d['other'])} Hz in the pauses")
-    text = f"hum at {names}" + (f" ({'; '.join(extra)})" if extra else "")
-    if heard_in_pauses_only:
-        text += ", heard in the pauses (speech covers it)"
+    # The event text stays short (it sets a spreadsheet column's width): tone(s), level, edges.
+    # Harmonics, the other lines heard in the pauses and how it was found are measures.
+    text = "hum " + " + ".join(f"{f:.1f}" for f, _ in heads) + " Hz"
     loudest = max(lv for _, lv in heads)
     severity = hum_severity(loudest, cut_start or cut_end, t)
-    parts = [text, shape if shape and len(heads) == 1 else f"around {loudest:.0f} dBFS"]
+    parts = [text, shape if shape and len(heads) == 1 else f"{loudest:.0f} dBFS"]
     parts += [w for w, on in (("starts abruptly", cut_start), ("cuts off abruptly", cut_end)) if on]
     s, e = int(start_s * ch.sr), int(end_s * ch.sr)
     return Finding(
@@ -533,6 +528,8 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
         severity=severity, problem=", ".join(parts),
         measures={**measures, "duration_s": round(end_s - start_s, 1),
                   "harmonics_hz": ",".join(str(h) for h in d["harmonics"]),
+                  "other_lines_hz": ",".join(str(round(f)) for f, _ in d["other"]),
+                  "heard": "in the pauses only (speech covers it)" if heard_in_pauses_only else "throughout",
                   "pause_lines_hz": ",".join(f"{f:.1f}" for f, _ in d["lines"]),
                   "pause_lines_dbfs": ",".join(f"{lv:.1f}" for _, lv in d["lines"]),
                   "pauses_measured": d["pauses"], "start_rise_db": round(rise, 1), "end_drop_db": round(drop, 1),
@@ -644,8 +641,7 @@ def hum_findings(ch: Chapter, t: HumTunables = HumTunables()) -> list[Finding]:
         if t.confirm_in_pauses and (near or level < pause_limit) \
                 and not _heard_in_pauses(y, fs, t, f0, start_s, end_s, pauses):
             continue                  # steady only inside the speech windows: not a hum (operator's audition)
-        shape = (f"building from {lv0:.0f} to {lv1:.0f} dBFS" if lv1 - lv0 >= t.rise_db
-                 else f"around {level:.0f} dBFS")
+        shape = (f"building {lv0:.0f} → {lv1:.0f} dBFS" if lv1 - lv0 >= t.rise_db else f"{level:.0f} dBFS")
         harm = ({int(round(float(np.median(h.freqs)))) for h in harmonics}
                 | set(_measured_harmonics(y, fs, t, base, f0)))
         f = _finding(ch, t, y, fs, f0, level, start_s, end_s, pauses, shape, harm,

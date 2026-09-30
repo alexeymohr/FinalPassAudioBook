@@ -41,7 +41,7 @@ def tally(findings: list[Finding]) -> str:
 # internal). report.json keeps every measure. A check not listed here shows all of its measures.
 CSV_MEASURES = {
     "breaths": ("loudness_db", "duration_ms", "ms_since_word", "click_db_vs_narration"),
-    "hum": ("frequency_hz", "level_max_dbfs", "harmonics_hz"),
+    "hum": ("level_max_dbfs", "harmonics_hz", "other_lines_hz", "found_by"),
     "noise": ("floor_under_speech_db", "floor_median_dbfs", "duration_s"),
     "dropout": ("background_dbfs", "background_vs_speech_db"),
     "plosive": ("burst_dbfs", "burst_vs_speech_db"),
@@ -179,11 +179,13 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
         w = csv.writer(fh)
         w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
         w.writerows([[]] * 2)
-        w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])
+        w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])       # the key, standing on its own
+        w.writerow([])
         w.writerow(ISSUE_COLUMNS)
         w.writerows(problems)
-        w.writerows([[]] * 3)
+        w.writerows([[]] * 2)
         w.writerow([INFO_LABEL, "", "", INFO_NOTE])
+        w.writerow([])
         w.writerow(ISSUE_COLUMNS)
         w.writerows(info)
         if pauses is None:
