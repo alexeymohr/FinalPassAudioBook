@@ -15,7 +15,7 @@ none.
 |---|---|---|
 | Mouth-click inhale (breath opening with a click) | 3 after a clear gap and loud; 2 after a gap, quiet; 1 no gap (a hard consonant may run into the inhale) | calibrated on one title's operator labels, heard in context |
 | Loud breath | 2 | calibrated on one title's operator labels |
-| Possible chopped word (local model) | 3 | evaluated on two titles |
+| Word ends abruptly where a generated clip ends (local model) | 1 | evaluated on four titles |
 | Hum (a steady tone, also found in the pauses when speech covers it) | 3 | 12 of 12 listed hums confirmed by ear on one title; 7 lines that tracking alone found were not hum and are no longer listed |
 | Noisy section (floor within 41 dB of the speech ≥ 3 s) | 3 / 2 / 1 by how close the floor comes to the speech | one title's QC room-tone notes |
 | Sound cutting out abruptly (at least speech −31 dB) | 3 / 2 / 1 by the level that cuts out | first guess; needs real examples |

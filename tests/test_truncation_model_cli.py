@@ -46,7 +46,7 @@ def test_flag_needs_a_confident_model_and_an_audible_ending() -> None:
     fake = _FakeModel([0.5])
     assert score_phrase_ends(ch, [e1], fake)[0]["flagged"] is False
     (f,) = truncation_findings(ch, records)
-    assert f.start_sample == e1 and f.severity == TRUNCATION_SEVERITY
+    assert f.start_sample == e1 and f.severity == TRUNCATION_SEVERITY and f.problem == "word ends abruptly"
 
 
 def test_tunables_default_to_the_evaluated_gate() -> None:

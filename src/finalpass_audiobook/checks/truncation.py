@@ -14,9 +14,9 @@ threshold: blind, 64 of those listings from two titles held no real chop (mostly
 straight into an inhale). The engine was not at fault: the numpy port matches the original code to
 1e-7 on those windows; the points it was asked about were.
 
-Severity 1, worded as a heads-up (operator): on two further titles it listed 8 clip ends, all very
-hard, abrupt word endings and none missing part of the word; only one would draw a QC note, and
-for a click just before the ending. "Word ends abruptly" is what it reliably finds.
+Severity 1, listed as just "word ends abruptly" (operator): on two further titles it listed 8 clip
+ends, all very hard, abrupt word endings and none missing part of the word; only one would draw a
+QC note, and for a click just before the ending. An abrupt ending is what it reliably finds.
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def truncation_findings(ch: Chapter, records: list[dict]) -> list[Finding]:
         out.append(Finding(
             file=ch.name, check="truncation", start_sample=e, end_sample=e,
             start_time=ch.clock(e), end_time=ch.clock(e), severity=TRUNCATION_SEVERITY,
-            problem="heads-up: word ends abruptly at a clip end",
+            problem="word ends abruptly",
             measures={"model_score": r["score"], "peak_final_30ms_dbfs": r["peak_final_30ms_dbfs"]},
         ))
     return out
