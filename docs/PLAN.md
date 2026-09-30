@@ -123,11 +123,16 @@ well under the chapter floor, listed only from speech −31 dB (about −50 dBFS
 
 ### 3.6 Plosive pop
 
-A short (≤ 80 ms), fast-rising swell in a steep 20-65 Hz band, carrying ≥ −10 dB of
-the moment's energy, not the first sound after digital black and not inside a
-breath; listed from speech +3 dB (2 from +6, 3 from +9). The voice itself carries
-almost nothing below 65 Hz; the loudest peak within 0.1 s is reported. Needs
-labelled examples.
+A low thump standing on its own just before a word (often breath, then pop, then word;
+removing it leaves the word intact). A burst below 100 Hz of at least −42 dBFS, at most
+40 ms wide, low-dominated (≥ 22 dB over 500–8000 Hz at its peak), over before the word
+(the low band falls ≥ 30 dB) and followed 75–150 ms later by the word's high end (≥ 20 dB
+above the high end at the pop). A normal p/b carries the word's high end with its burst.
+Severity by level: 1 from −42 dBFS, 2 from −34, 3 from −26. A pop within a mouth-click
+inhale or up to 200 ms after it is part of that breath's entry. Evidence: 10 of 12
+QC-noted pops; a blind round of 32 looser candidates: 10 of 11 wanted, 1 of 21 others
+(limits set on those clips); held out, 29 of 32 listings were plosives by ear. About 11 per
+15-minute chapter.
 
 ### 3.7 Click in a pause
 
@@ -185,7 +190,7 @@ app into place only when all checks pass.
 
 ## 6. Open items
 
-1. Dropout and plosive limits: calibrate on the operator's labelled examples.
+1. Dropout limits: calibrate on labelled examples.
 2. The chopped-word model's precision on phrase ends into room tone (its
    evaluation covered clip ends into digital black).
 3. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic

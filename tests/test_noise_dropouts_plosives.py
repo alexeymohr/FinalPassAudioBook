@@ -119,41 +119,66 @@ def test_dropout_severity_follows_what_cuts_out(background_dbfs: float, severity
 # --- plosives --------------------------------------------------------------
 
 
-def _pop(amp: float, hz: float = 40.0) -> np.ndarray:
-    t = np.arange(int(0.06 * SR)) / SR
-    return amp * np.sin(2 * np.pi * hz * t) * np.exp(-t / 0.02)
+def _thump(amp: float, hz: float = 60.0) -> np.ndarray:
+    """A pop: a low sine dying away in a few tens of milliseconds."""
+    t = np.arange(int(0.03 * SR)) / SR
+    return amp * np.sin(2 * np.pi * hz * t) * np.exp(-t / 0.006)
 
 
-def test_low_frequency_pop_is_found_and_speech_alone_is_not() -> None:
-    x = _narration(10.0)
-    assert plosive_findings(chapter(x), ()) == []
-    pop = _pop(0.75)
-    at = int(4.0 * SR)
-    y = x.copy()
-    y[at:at + len(pop)] += pop
-    (f,) = plosive_findings(chapter(y), ())
-    assert abs(f.start_sample / SR - 4.0) < 0.05
+def _before_word(pop: np.ndarray | None, lead_s: float = 0.11) -> tuple[np.ndarray, int]:
+    """A phrase, a pause, then a phrase whose first word starts at `word`; the pop `lead_s` before it."""
+    x = np.concatenate([phrase(3), room(0.8), phrase(3), room(1.0)])
+    word = len(phrase(3)) + int(0.8 * SR)
+    if pop is not None:
+        at = word - int(lead_s * SR)
+        x[at:at + len(pop)] += pop
+    return x, word
 
 
-@pytest.mark.parametrize("amp, severity", [(1.0, 3), (0.75, 2), (0.5, 1), (0.2, None)])
-def test_plosive_severity_follows_the_margin_over_the_speech(amp: float, severity: int | None) -> None:
-    """Listed from speech +3 dB; 2 from +6, 3 from +9. The loudest peak is kept, not the filter's pre-ring."""
-    x = _narration(10.0)
-    pop = _pop(amp)
-    x[int(4.0 * SR):int(4.0 * SR) + len(pop)] += pop
-    found = plosive_findings(chapter(x), ())
+def test_a_pop_just_before_a_word_is_found_and_speech_alone_is_not() -> None:
+    x, _ = _before_word(None)
+    assert plosive_findings(chapter(x)) == []
+    x, word = _before_word(_thump(0.2))
+    (f,) = plosive_findings(chapter(x))
+    assert f.check == "plosive" and abs(f.start_sample - (word - int(0.11 * SR))) < int(0.02 * SR)
+    assert f.severity == 3 and 75 <= f.measures["ms_to_word"] <= 150
+
+
+@pytest.mark.parametrize("amp, severity", [(0.2, 3), (0.1, 2), (0.05, 1), (0.002, None)])
+def test_plosive_severity_follows_its_level(amp: float, severity: int | None) -> None:
+    """1 from -42 dBFS below 100 Hz, 2 from -34, 3 from -26."""
+    x, _ = _before_word(_thump(amp))
+    found = plosive_findings(chapter(x))
     assert [f.severity for f in found] == ([severity] if severity else [])
     for f in found:
-        rel = f.measures["burst_vs_speech_db"]
-        assert f.severity == (3 if rel >= 9 else 2 if rel >= 6 else 1)
+        lv = f.measures["low_dbfs"]
+        assert f.severity == (3 if lv >= -26 else 2 if lv >= -34 else 1)
 
 
-def test_energy_above_65_hz_is_not_a_pop() -> None:
-    """The voice's own low pitch lives above 65 Hz; the steep band keeps it out."""
-    x = _narration(10.0)
-    thump = _pop(1.0, hz=110.0)
-    x[int(4.0 * SR):int(4.0 * SR) + len(thump)] += thump
-    assert plosive_findings(chapter(x), ()) == []
+def test_a_normal_plosive_onset_is_not_a_pop() -> None:
+    """The same thump at the word's own onset: the word's high end arrives with it."""
+    x, word = _before_word(None)
+    pop = _thump(0.2)
+    x[word:word + len(pop)] += pop
+    assert plosive_findings(chapter(x)) == []
+
+
+def test_a_thump_with_a_high_end_is_not_a_pop() -> None:
+    noise = RNG.standard_normal(int(0.03 * SR)) * 0.05 * np.exp(-np.arange(int(0.03 * SR)) / (0.006 * SR))
+    x, _ = _before_word(_thump(0.2) + noise)
+    assert plosive_findings(chapter(x)) == []
+
+
+def test_a_thump_long_before_the_next_word_is_not_this_pop() -> None:
+    x, _ = _before_word(_thump(0.2), lead_s=0.2)            # 200 ms: the word starts too late
+    assert plosive_findings(chapter(x)) == []
+
+
+def test_a_pop_that_is_part_of_a_mouth_click_inhale_is_left_to_it() -> None:
+    x, word = _before_word(_thump(0.2))
+    breath = (word - int(0.5 * SR), word - int(0.2 * SR))      # the pop falls within 200 ms after it
+    assert plosive_findings(chapter(x), (breath,)) == []
+    assert len(plosive_findings(chapter(x))) == 1
 
 
 # --- added after the audit ----------------------------------------------------------------

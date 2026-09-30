@@ -47,7 +47,7 @@ CSV_MEASURES = {
     "hum": ("level_max_dbfs", "harmonics_hz", "other_lines_hz", "found_by"),
     "noise": ("floor_under_speech_db", "floor_median_dbfs", "duration_s"),
     "dropout": ("background_dbfs", "background_vs_speech_db"),
-    "plosive": ("burst_dbfs", "burst_vs_speech_db"),
+    "plosive": ("low_dbfs", "low_over_high_db", "ms_to_word"),
     "truncation": ("model_score", "peak_final_30ms_dbfs"),
     "clicks": ("peak_dbfs", "ms_after_word", "ms_before_word"),
     "ticks": ("above_16k_dbfs", "width_samples", "peak_dbfs"),
