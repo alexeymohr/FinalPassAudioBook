@@ -11,9 +11,9 @@ def read_report(path: Path) -> tuple[dict, list[dict], list[dict]]:
     with open(path, newline="", encoding="utf-8-sig") as fh:
         rows = list(csv.reader(fh))
     blank = rows.index([])
-    summary = {r[0]: r[1] if len(r) > 1 else "" for r in rows[:blank]}
+    summary = {r[0]: " ".join(c for c in r[1:] if c) for r in rows[:blank]}
     heads = [i for i, r in enumerate(rows) if r == ISSUE_COLUMNS]
-    assert len(heads) == 2 and rows[heads[0] - 1] == [PROBLEMS_LABEL] and rows[heads[1] - 1] == [INFO_LABEL]
+    assert len(heads) == 2 and rows[heads[0] - 1][0] == PROBLEMS_LABEL and rows[heads[1] - 1][0] == INFO_LABEL
 
     def table(i: int) -> list[dict]:
         out = []

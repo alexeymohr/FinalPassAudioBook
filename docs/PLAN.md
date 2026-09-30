@@ -22,7 +22,7 @@ fpab rules
 - `report.json`: everything — tunables, every measurement, all scored phrase ends,
   network attempts (must be 0).
 - `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`). It
-  opens with a summary (one label and value per row: file, format, duration, problem
+  opens with a summary (a label, then one short fact per cell: file, format, duration, problem
   and informational event counts, narration level, noise floor, rule set, whether the
   chopped-word check ran, when, a breaths line), then the problem events (every
   finding, severity 1-3) in time order, then, a few empty rows below, the

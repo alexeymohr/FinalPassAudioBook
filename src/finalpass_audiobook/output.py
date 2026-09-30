@@ -15,8 +15,12 @@ REPORT_JSON = "report.json"
 ISSUE_COLUMNS = ["file", "start_time", "end_time", "event", "severity", "check", "measures"]
 REPORT_MARKER = "FinalPass AudioBook report"       # first cell of a per-file CSV: how "ours" is recognised
 LEGACY_HEADER = "file,time,problem,severity,end_time,check,measures"   # per-file CSVs before the summary
-PROBLEMS_LABEL = "PROBLEM EVENTS (severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen)"
-INFO_LABEL = "INFORMATIONAL EVENTS (quiet breaths and, when asked for, the pause map; no severity)"
+# Section titles stay short (spreadsheets size a column to its longest cell); the explanation
+# sits in the event column, which is wide anyway.
+PROBLEMS_LABEL = "PROBLEM EVENTS"
+PROBLEMS_NOTE = "severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen"
+INFO_LABEL = "INFORMATIONAL EVENTS"
+INFO_NOTE = "quiet breaths and, when asked for, the pause map; no severity"
 
 LEGEND = [
     "Severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen.",
@@ -116,34 +120,30 @@ def _level(dbfs: float | None) -> str:
     return "n/a" if dbfs is None else f"{dbfs:.1f} dBFS".replace("-", "\u2212")   # a true minus: never a formula
 
 
-def _breaths(fr: FileResult) -> str:
-    c = fr.counts
-    if "breaths" not in c:
-        return ""
-    return (f"{c['breaths']} found: {c.get('breaths_listed', 0)} listed as problems "
-            f"({c.get('mouth_click_inhales', 0)} mouth-click inhales), {c.get('quiet_breaths', 0)} quiet (informational)")
-
-
-def summary_rows(fr: FileResult, informational: int | None, context: dict | None = None) -> list[list]:
-    """The top of a per-file CSV: what was checked and what was found, one label and value per row."""
+def summary_rows(fr: FileResult, pauses: int | None, context: dict | None = None) -> list[list]:
+    """The top of a per-file CSV: a label, then one short fact per cell (so no column is widened by
+    it; counts are numbers). Free text (notes) goes in the event column."""
     context = context or {}
-    sr = fr.sample_rate
-    channels = f"{fr.channels} channel{'' if fr.channels == 1 else 's'}" if fr.channels else ""
-    fmt = ", ".join(x for x in (fr.audio_format, f"{sr / 1000:g} kHz" if sr else "", channels) if x)
+    sr, c = fr.sample_rate, fr.counts
+    fmt = [x.strip() for x in fr.audio_format.split(",", 1)] if fr.audio_format else []
+    fmt += [f"{sr / 1000:g} kHz"] if sr else []
+    fmt += [f"{fr.channels} channel{'' if fr.channels == 1 else 's'}"] if fr.channels else []
+    quiet = len(fr.informational)
     rows = [[REPORT_MARKER, context.get("version", "")],
             ["file", _cell(fr.file)],
-            ["format", fmt],
+            ["format", *fmt],
             ["duration", samples_to_clock(round(fr.duration_seconds * sr), sr) if sr else ""],
-            ["problem events", f"{len(fr.findings)} ({tally(fr.findings)})"],
-            ["informational events", f"{len(fr.informational) + (informational or 0)} "
-             f"({len(fr.informational)} quiet breaths, "
-             + (f"{informational} pauses)" if informational is not None else "pause rows are off)")],
-            ["breaths", _breaths(fr)],
-            ["narration level", _level(fr.narration_dbfs)],
-            ["noise floor", _level(fr.noise_floor_dbfs)]]
+            ["problem events", len(fr.findings), *(f"{sum(f.severity == k for f in fr.findings)} × sev {k}"
+                                                   for k in SEVERITIES)],
+            ["informational events", quiet + (pauses or 0), f"{quiet} quiet breaths",
+             f"{pauses} pauses" if pauses is not None else "pause rows off"]]
+    if "breaths" in c:
+        rows.append(["breaths", c["breaths"], f"{c.get('breaths_listed', 0)} problems",
+                     f"{c.get('mouth_click_inhales', 0)} mouth-click inhales", f"{c.get('quiet_breaths', 0)} quiet"])
+    rows += [["narration level", _level(fr.narration_dbfs)], ["noise floor", _level(fr.noise_floor_dbfs)]]
     rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "analysed") if context.get(k)]
     if fr.notes:
-        rows.append(["notes", _cell("; ".join(fr.notes))])
+        rows.append(["notes", "", "", _cell("; ".join(fr.notes))])
     return rows
 
 
@@ -163,11 +163,11 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
         w = csv.writer(fh)
         w.writerows(summary_rows(fr, None if pauses is None else len(pauses), context))
         w.writerows([[]] * 2)
-        w.writerow([PROBLEMS_LABEL])
+        w.writerow([PROBLEMS_LABEL, "", "", PROBLEMS_NOTE])
         w.writerow(ISSUE_COLUMNS)
         w.writerows(problems)
         w.writerows([[]] * 3)
-        w.writerow([INFO_LABEL])
+        w.writerow([INFO_LABEL, "", "", INFO_NOTE])
         w.writerow(ISSUE_COLUMNS)
         w.writerows(info)
         if pauses is None:
