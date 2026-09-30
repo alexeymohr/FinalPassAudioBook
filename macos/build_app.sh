@@ -72,6 +72,13 @@ cp "$BIN" "$APP/Contents/MacOS/FPAB"
 cp "$HERE/Resources/Info.plist" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 
+say "App icon (Icon Composer file -> Assets.car, plus an .icns for macOS before 26)"
+xcrun actool --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \
+    --app-icon AppIcon --output-partial-info-plist "$STAGE/icon.plist" --errors --warnings \
+    "$HERE/Resources/AppIcon.icon" > "$STAGE/actool.log" || { cat "$STAGE/actool.log"; die "icon compile failed"; }
+[ -s "$APP/Contents/Resources/Assets.car" ] && [ -s "$APP/Contents/Resources/AppIcon.icns" ] \
+    || { cat "$STAGE/actool.log"; die "icon compile produced no icon"; }
+
 say "Python interpreter (copied from $PY_ROOT)"
 ditto "$PY_ROOT" "$ENGINE/python"
 PY="$ENGINE/python/bin/python3.12"
