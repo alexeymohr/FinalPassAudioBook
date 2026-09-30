@@ -22,7 +22,7 @@ from .checks.hum import HumTunables, hum_findings
 from .checks.noise import NoiseTunables, noise_findings
 from .checks.pauses import pause_map
 from .checks.plosives import PlosiveTunables, plosive_findings
-from .checks.truncation import TruncationTunables, score_phrase_ends, truncation_findings
+from .checks.truncation import TruncationTunables, clip_ends, score_phrase_ends, truncation_findings
 from .findings import FileResult, Finding, RunReport
 from .model import ModelError, load
 from .netguard import NetworkGuard
@@ -105,7 +105,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     records: list[dict] = []
     if model is not None:
         say("chopped words")
-        ends = [p0 for p0, _ in act.pauses] + ([act.last_sound] if act.last_sound else [])
+        ends = clip_ends(ch, opts.truncation_tunables)
         records = score_phrase_ends(ch, ends, model, opts.truncation_tunables)
         findings += truncation_findings(ch, records)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))

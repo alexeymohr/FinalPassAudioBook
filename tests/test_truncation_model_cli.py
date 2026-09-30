@@ -12,7 +12,8 @@ import soundfile as sf
 from click.testing import CliRunner
 
 from finalpass_audiobook import model as model_mod
-from finalpass_audiobook.checks.truncation import TruncationTunables, score_phrase_ends, truncation_findings
+from finalpass_audiobook.checks.truncation import (TRUNCATION_SEVERITY, TruncationTunables, clip_ends,
+                                                   score_phrase_ends, truncation_findings)
 from finalpass_audiobook.cli import main
 from finalpass_audiobook.netguard import NetworkAccessDenied, NetworkGuard
 from synth import SR, chapter, phrase, room
@@ -45,7 +46,7 @@ def test_flag_needs_a_confident_model_and_an_audible_ending() -> None:
     fake = _FakeModel([0.5])
     assert score_phrase_ends(ch, [e1], fake)[0]["flagged"] is False
     (f,) = truncation_findings(ch, records)
-    assert f.start_sample == e1 and f.severity == 3
+    assert f.start_sample == e1 and f.severity == TRUNCATION_SEVERITY
 
 
 def test_tunables_default_to_the_evaluated_gate() -> None:
@@ -98,3 +99,13 @@ def test_missing_model_is_a_note_not_a_failure(tmp_path: Path, monkeypatch: pyte
     r = CliRunner().invoke(main, ["check", "--out", str(tmp_path / "o"), str(tmp_path / "ch.wav")])
     assert r.exit_code == 0, r.output
     assert "truncation check skipped" in (tmp_path / "o" / "issues.txt").read_text()
+
+
+def test_only_clip_ends_into_digital_black_are_scored() -> None:
+    """The model was evaluated where a generated clip stops and digital black begins."""
+    x = np.concatenate([room(0.5), phrase(3), np.zeros(int(0.2 * SR)),      # a clip end: sound, then black
+                        phrase(3), np.zeros(int(0.04 * SR)),                 # 40 ms of black: too short
+                        phrase(3), room(0.8), phrase(2)])                    # an ordinary pause: not a clip end
+    end = int(0.5 * SR) + len(phrase(3))
+    assert clip_ends(chapter(x)) == [end]
+    assert clip_ends(chapter(np.concatenate([np.zeros(SR), phrase(3), room(1.0)]))) == []   # black at the file start

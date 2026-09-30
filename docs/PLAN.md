@@ -70,16 +70,21 @@ except hum. Severities are graded on the value the text shows (0.1 dB).
   higher severity. The per-file CSV lists quiet breaths as informational events
   and sums up the breaths in its summary.
 
-### 3.2 Possible chopped word (local model)
+### 3.2 Word ends abruptly at a clip end (local model)
 
 `mythicinfinity/speech-truncation-detection-12M`, run as our numpy port of its
 inference (`truncation_np.py`); the audited torch code stays vendored, unmodified,
-as the reference. Every phrase end is scored on the 5 s ending there; flagged at
-score ≥ 0.979795 (10 ms decision window) with a final-30 ms peak ≥ −23.5 dBFS.
-Severity 3 (if real, part of a word is missing). The port matches the reference
-within 1e-4 on synthetic windows at 11.025-88.2 kHz, odd lengths, DC and rumble,
-and on a real chapter's phrase ends (max 1e-5, identical flags); its tests catch
-16 of 16 deliberately planted bugs.
+as the reference. The model asks whether speech was still active when the audio
+stopped, and it was evaluated on one kind of point only: where a generated clip ends
+and digital black begins (the first sample of ≥ 50 ms of exact zeros after sound).
+Only those points are scored, on the 5 s ending there; listed at score ≥ 0.979795
+(10 ms decision window) with a final-30 ms peak ≥ −23.5 dBFS. Severity 1, a heads-up:
+"word ends abruptly". Evidence: on the evaluation title fpab finds the same 118 clip
+ends and lists the same 10 (9 real chops, 1 clean ending), on its second title 0 of 27;
+on two further titles 8 listings, all hard abrupt endings, none missing part of a word
+(operator). Scoring every pause instead, as fpab first did, gave 64 listings with no
+real chop. The port matches the reference within 1e-4 on synthetic windows at
+11.025-88.2 kHz and to 1e-7 on real windows; its tests catch 16 of 16 planted bugs.
 
 ### 3.3 Hum
 
@@ -194,16 +199,14 @@ app into place only when all checks pass.
 
 ## 6. Open items
 
-1. The chopped-word model's precision on phrase ends into room tone (its
-   evaluation covered clip ends into digital black).
-2. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic
+1. "Starts/cuts off abruptly": 6/8 right by ear, 2 missed (see §3.3); on synthetic
    audio a cut can be missed when a low-pitched word starts on it.
-3. A further generic pause rule set (numbers pending from the operator).
-4. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
-5. Breath frames are computed twice per chapter (needs a small FinalPass API change).
-6. Half-precision weights would save ~25 MB (changes the audited file; needs the
+2. A further generic pause rule set (numbers pending from the operator).
+3. Reverb / roominess (milestone 2): the QC-noted block the noise check misses.
+4. Breath frames are computed twice per chapter (needs a small FinalPass API change).
+5. Half-precision weights would save ~25 MB (changes the audited file; needs the
    operator's OK, a recorded SHA-256 and the same equivalence bar).
-7. Click in a pause: confirm the limits on a second title. Digital tick: no real
+6. Click in a pause: confirm the limits on a second title. Digital tick: no real
    example yet (limits set with planted spikes).
-8. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
+7. The app's drag-and-drop, folder mode and the "(2)" folder prompt need a
    hands-on check by the operator.
