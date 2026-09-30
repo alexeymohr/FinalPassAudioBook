@@ -8,7 +8,7 @@ from scipy.signal import lfilter
 from finalpass_audiobook.checks.dropouts import dropout_findings
 from finalpass_audiobook.checks.noise import floor_track, noise_findings
 from finalpass_audiobook.checks.plosives import plosive_findings
-from synth import RNG, SR, band_noise, chapter, phrase, room
+from synth import RNG, SR, chapter, phrase, room
 
 
 def _narration(seconds: float, room_dbfs: float = -72.0) -> np.ndarray:
@@ -75,32 +75,43 @@ def test_clean_narration_is_not_noisy() -> None:
 # --- dropouts --------------------------------------------------------------
 
 
-def _cut_after(level_dbfs: float, silence_s: float = 0.1) -> tuple[np.ndarray, int]:
-    """Narration, then a steady sound at `level_dbfs`, cut to exact zero for `silence_s`, then more."""
+def _hole(level_dbfs: float, zeros: int, after_dbfs: float | None = None) -> tuple[np.ndarray, int]:
+    """A steady tone at `level_dbfs` with `zeros` samples of dead silence punched into it."""
     t = np.arange(int(0.5 * SR)) / SR
-    tone = np.sqrt(2) * 10 ** (level_dbfs / 20) * np.sin(2 * np.pi * 1000.0 * t)   # exact RMS: a steady tone
-    x = np.concatenate([_narration(4.0), tone, np.zeros(int(silence_s * SR)), _narration(4.0)])
-    return x, int(4.0 * SR) + len(tone)
+    tone = lambda db: np.sqrt(2) * 10 ** (db / 20) * np.sin(2 * np.pi * 1000.0 * t)  # noqa: E731
+    x = np.concatenate([_narration(3.0), tone(level_dbfs), np.zeros(zeros),
+                        tone(level_dbfs if after_dbfs is None else after_dbfs), _narration(3.0)])
+    return x, int(3.0 * SR) + len(t)
 
 
-@pytest.mark.parametrize("level_dbfs, listed", [(-30.0, True), (-44.0, True), (-47.0, False), (-70.0, False)])
-def test_a_cut_to_silence_is_listed_only_when_heard(level_dbfs: float, listed: bool) -> None:
-    x, at = _cut_after(level_dbfs)
-    found = [f for f in dropout_findings(chapter(x)) if abs(f.start_sample - at) < 10]
+def _at(x: np.ndarray, at: int) -> list:
+    return [f for f in dropout_findings(chapter(x)) if abs(f.start_sample - at) < 5]
+
+
+@pytest.mark.parametrize("level_dbfs, listed", [(-20.0, True), (-44.0, True), (-47.0, False)])
+def test_a_frame_of_dead_silence_inside_the_sound_is_a_dropout(level_dbfs: float, listed: bool) -> None:
+    x, at = _hole(level_dbfs, int(0.02 * SR))
+    found = _at(x, at)
     assert len(found) == int(listed)
     for f in found:
-        assert f.severity == 3 and f.measures["silence_ms"] == 100
-        assert abs(f.measures["level_before_dbfs"] - level_dbfs) < 0.5
+        assert f.severity == 3 and f.measures["silence_ms"] == 20.0
 
 
-def test_a_few_zero_samples_are_not_a_dropout() -> None:
-    x, at = _cut_after(-30.0, silence_s=250 / SR)             # 250 samples: under the 300 needed
-    assert [f for f in dropout_findings(chapter(x)) if abs(f.start_sample - at) < 10] == []
+def test_it_must_recover_within_a_frame() -> None:
+    x, at = _hole(-20.0, int(0.040 * SR))                      # 40 ms: longer than a frame
+    assert _at(x, at) == []
 
 
-def test_sound_starting_from_silence_is_not_listed() -> None:
-    x = np.concatenate([np.zeros(SR), band_noise(1.0, 300, 3000, -20.0), _narration(3.0)])
-    assert [f for f in dropout_findings(chapter(x)) if f.start_sample < 2 * SR] == []
+def test_it_must_come_back_loud_enough() -> None:
+    x, at = _hole(-20.0, int(0.02 * SR), after_dbfs=-60.0)     # sound cut to a quiet tail: not a dropout
+    assert _at(x, at) == []
+
+
+def test_a_zero_crossing_is_not_a_dropout() -> None:
+    x, at = _hole(-20.0, 4)                                    # a few exact zeros happen naturally
+    assert _at(x, at) == []
+    x, at = _hole(-20.0, 10)                                   # ten is a hole
+    assert len(_at(x, at)) == 1
 
 
 def test_natural_endings_into_room_tone_are_not_dropouts() -> None:

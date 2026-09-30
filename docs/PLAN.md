@@ -115,16 +115,15 @@ narration for about 5.5 s; severity by the gap under the local speech: 3 < 25 dB
 (3 ≥ −45, 2 ≥ −51 dBFS). Evidence: 6 of the title's 7 QC-noted noisy blocks found;
 the missed one had a normal floor (a room-character question, see §6).
 
-### 3.5 Sound cutting out
+### 3.5 Dropout
 
-Generated narration has no room; short stretches of exact digital zero are everywhere in edited
-deliveries (about 60 per 15 minutes on one title), almost all inside very quiet background, and
-the operator does not count those. Listed only when the drop to nothing is heard: a run of exact
-zeros of at least 300 samples (at 44.1 kHz, scaled) whose last 5 ms before it are at least
-−45 dBFS. Always severity 3. Sound cutting in from silence is not listed. Evidence: 32 blind
-holes in quiet background (−64 to −98 dBFS before the cut) were not noticeable drops; this rule
-lists 1 cut in 12 chapters of the calibration title (a word's tail at −30 dBFS) and 1 in 5
-chapters of a second title.
+A classic dropout (operator): the sound falls to dead silence for a frame or less (29.97 fps,
+~33 ms) and comes straight back. A run of at least 10 exact zeros (at 44.1 kHz, scaled; a slow
+zero crossing leaves at most 9) lasting at most 33 ms, with at least −45 dBFS in the 5 ms before
+and the 5 ms after. Always severity 3. Generated narration has no room, so digital silence after a
+word is just a pause and is not listed. None on the calibration title's 12 chapters or a second
+title's 5 (a guard); planted in real narration, holes of 10 samples to 15 ms inside words are
+listed 60/60, 30 ms 58/60, and 8-sample holes, 40 ms holes and holes in quiet audio 0/60.
 
 ### 3.6 Plosive pop
 
