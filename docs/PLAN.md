@@ -224,7 +224,10 @@ locked dependencies and hash-pinned build backends, removes the building Mac's
 folder names from what it bundles (and refuses to finish if the repo, Python or model
 folders it copied from still appear, or if an untracked file sits in the package), signs
 every Mach-O, asserts exact entitlements and moves the app into place only when all
-checks pass. The app never replaces an existing file; reports it could not place are
+checks pass. `--sign` signs with a Developer ID, secure timestamp and hardened runtime;
+`macos/release.sh` notarizes and staples the app and wraps it in a signed, notarized,
+stapled DMG; the app carries every bundled component's licence texts in
+`Contents/Resources/Licenses`. The app never replaces an existing file; reports it could not place are
 kept until saved, it asks before discarding them, and any left
 when it quits are offered again at the next launch.
 

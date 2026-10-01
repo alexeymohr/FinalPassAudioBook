@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finalpass-audiobook"
-version = "0.1.0.dev0"
+version = "0.1.0"
 description = "Local, offline QC for AI-narrated audiobook chapters."
 readme = "README.md"
 license = "MIT AND Apache-2.0"   # fpab is MIT; the vendored model code keeps its Apache-2.0

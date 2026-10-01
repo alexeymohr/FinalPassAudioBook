@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Build "FinalPass AudioBook.app": the SwiftUI window plus the engine it runs — a self-contained
 # Python with fpab and its locked base dependencies (the chopped-word model runs as numpy; no
-# PyTorch), and the verified model weights. The app is sandboxed with NO network entitlement,
-# and ad-hoc signed for this Mac only.
+# PyTorch), and the verified model weights. The app is sandboxed with NO network entitlement.
 #
-#   macos/build_app.sh               -> macos/build/FinalPass AudioBook.app
-#   macos/build_app.sh --test-hooks  -> the same, plus the FPAB_AUTORUN hook for scripted checks
+#   macos/build_app.sh               -> macos/build/FinalPass AudioBook.app, ad-hoc signed (this Mac only)
+#   macos/build_app.sh --sign "Developer ID Application: NAME (TEAM)"
+#                                    -> signed for other Macs: Developer ID, secure timestamp, hardened
+#                                       runtime; then macos/release.sh notarizes it and makes the DMG
+#   macos/build_app.sh --test-hooks  -> plus the FPAB_AUTORUN hook for scripted checks (never released)
 #
 # Needs: this repo's .venv (for the interpreter), uv, and the model installed by `fpab setup-model`.
 # Everything is assembled in a staging folder and moved into place only once it is signed and
@@ -13,7 +15,20 @@
 set -euo pipefail
 
 TEST_HOOKS=0
-[ "${1:-}" = "--test-hooks" ] && TEST_HOOKS=1
+SIGN_ID="-"                                 # ad hoc unless --sign names a Developer ID
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --test-hooks) TEST_HOOKS=1 ;;
+        --sign) shift; SIGN_ID="${1:-}"; [ -n "$SIGN_ID" ] || { echo "--sign needs an identity" >&2; exit 2; } ;;
+        *) echo "unknown option: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+if [ "$SIGN_ID" = "-" ]; then
+    SIGN=(-s - -f --timestamp=none)
+else
+    SIGN=(-s "$SIGN_ID" -f --timestamp --options runtime)
+fi
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REPO="$(cd "$HERE/.." && pwd -P)"
@@ -36,6 +51,10 @@ VERSION="$(sed -n '/^\[project\]/,/^\[/s/^version = "\(.*\)"/\1/p' "$REPO/pyproj
 [ -d "$MODEL_SRC" ] || die "model not installed ($MODEL_SRC): run 'fpab setup-model' first"
 [ -n "$EXCLUDE_NEWER" ] || die "no [tool.uv] exclude-newer in pyproject.toml"
 [ -n "$VERSION" ] || die "no [project] version in pyproject.toml"
+if [ "$SIGN_ID" != "-" ]; then
+    [[ "$SIGN_ID" == "Developer ID Application: "* ]] || die "--sign needs a \"Developer ID Application: …\" identity"
+    security find-identity -v -p codesigning | grep -qF "\"$SIGN_ID\"" || die "no valid signing identity \"$SIGN_ID\""
+fi
 
 # The 7-day package hold: the lock's cutoff must be at least 7 days in the past.
 "$REPO/.venv/bin/python" -I -c "
@@ -212,6 +231,44 @@ leaked="$(grep -rlF -e "$REPO" -e "$PY_ROOT" -e "$MODEL_SRC" -e "$HOME/.cache" -
           | head -5 || true)"                                   # grep finds none: exit 1
 [ -z "$leaked" ] || { echo "$leaked"; die "the app would carry this Mac's folder names"; }
 
+say "Licences: each bundled component's own licence texts, gathered in Contents/Resources/Licenses"
+"$REPO/.venv/bin/python" -I - "$SITE" "$STD" "$APP/Contents/Resources/Licenses" "$VERSION" <<'PYL'
+import shutil, sys
+from pathlib import Path
+site, std, out, version = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+NAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "AUTHORS")
+rows = []
+def take(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest)
+for d in sorted(site.glob("*.dist-info")):
+    meta = {}
+    for line in (d / "METADATA").read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            break
+        k, _, v = line.partition(": ")
+        meta.setdefault(k, v.strip())
+    name, ver = meta.get("Name", d.name), meta.get("Version", "")
+    files = [p for p in sorted(d.rglob("*")) if p.is_file() and p.name.upper().startswith(NAMES)]
+    for p in files:
+        take(p, out / f"{name}-{ver}" / p.relative_to(d))
+    lic = meta.get("License-Expression") or (meta.get("License", "").splitlines() or [""])[0]
+    rows.append(f"{name} {ver}: {lic[:70] or 'see its folder'}")
+take(std / "LICENSE.txt", out / "Python-3.12" / "LICENSE.txt")
+rows.append("Python 3.12 (the interpreter and its standard library): PSF-2.0, see Python-3.12")
+take(site / "_soundfile_data" / "COPYING", out / "libsndfile" / "COPYING")
+rows.append("libsndfile (bundled by soundfile, unmodified, dynamically loaded): LGPL-2.1-or-later; "
+            "source: https://github.com/libsndfile/libsndfile")
+vendor = site / "finalpass_audiobook" / "vendor" / "speech_truncation"
+take(vendor / "LICENSE", out / "speech-truncation-detection-12M" / "LICENSE")
+take(vendor / "PROVENANCE.md", out / "speech-truncation-detection-12M" / "PROVENANCE.md")
+rows.append("mythicinfinity/speech-truncation-detection-12M (model weights and reference code): Apache-2.0")
+(out / "README.txt").write_text(
+    f"FinalPass AudioBook {version} contains the following software, each under its own licence.\n"
+    "The full texts are in the folders beside this file.\n\n" + "\n".join(rows) + "\n", encoding="utf-8")
+print(f"licences gathered: {len(rows)} components")
+PYL
+
 say "Guard: no link may lead outside the bundle or nowhere"
 leaks="$(find "$APP" -type l | while IFS= read -r l; do
     t="$(readlink -f "$l" || true)"
@@ -219,7 +276,7 @@ leaks="$(find "$APP" -type l | while IFS= read -r l; do
 done)"
 [ -z "$leaks" ] || { echo "$leaks"; die "links leave the bundle"; }
 
-say "Sign (ad hoc): every Mach-O file, found by its magic number"
+say "Sign ($([ "$SIGN_ID" = "-" ] && echo "ad hoc" || echo "$SIGN_ID, hardened runtime")): every Mach-O file, found by its magic number"
 "$REPO/.venv/bin/python" -I - "$ENGINE" > "$STAGE/macho.txt" <<'PY'
 import os, sys
 MAGIC = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
@@ -235,12 +292,12 @@ PY
 count=0
 while IFS= read -r f; do
     [ "$f" = "$PY" ] && continue
-    codesign -s - -f --timestamp=none "$f" >>"$LOG" 2>&1 || { tail -5 "$LOG"; die "signing failed: $f"; }
+    codesign "${SIGN[@]}" "$f" >>"$LOG" 2>&1 || { tail -5 "$LOG"; die "signing failed: $f"; }
     count=$((count + 1))
 done < "$STAGE/macho.txt"
-codesign -s - -f --timestamp=none --entitlements "$HERE/Resources/Engine.entitlements" "$PY" >>"$LOG" 2>&1 \
+codesign "${SIGN[@]}" --entitlements "$HERE/Resources/Engine.entitlements" "$PY" >>"$LOG" 2>&1 \
     || { tail -5 "$LOG"; die "signing the engine failed"; }
-codesign -s - -f --timestamp=none --entitlements "$HERE/Resources/FPAB.entitlements" "$APP" >>"$LOG" 2>&1 \
+codesign "${SIGN[@]}" --entitlements "$HERE/Resources/FPAB.entitlements" "$APP" >>"$LOG" 2>&1 \
     || { tail -5 "$LOG"; die "signing the app failed"; }
 echo "signed $count libraries, the engine and the app"
 
@@ -258,8 +315,18 @@ keys() {
 [ "$(keys "$PY")" = "com.apple.security.app-sandbox,com.apple.security.inherit" ] \
     || die "the engine's entitlements are not exactly sandbox + inherit: $(keys "$PY")"
 echo "entitlements exact; no network"
+if [ "$SIGN_ID" != "-" ]; then                  # what notarization requires of every executable
+    for f in "$APP" "$PY"; do
+        info="$(codesign -dvv "$f" 2>&1)"
+        grep -q "^Authority=$SIGN_ID\$" <<<"$info" || die "not signed by $SIGN_ID: $f"
+        grep -q "(runtime)" <<<"$info" || die "no hardened runtime: $f"
+        grep -q "^Timestamp=" <<<"$info" || die "no secure timestamp: $f"
+    done
+    echo "Developer ID, hardened runtime and secure timestamp on the app and the engine"
+fi
 
 rm -rf "$FINAL"
 mv "$APP" "$FINAL"
 du -sh "$FINAL"
-echo "Built: $FINAL$([ "$TEST_HOOKS" = 1 ] && echo '  (with test hooks)')"
+echo "Built: $FINAL$([ "$TEST_HOOKS" = 1 ] && echo '  (with test hooks)')$([ "$SIGN_ID" != "-" ] && echo "
+Signed by $SIGN_ID. Next: macos/release.sh (notarize, staple, DMG)")"
