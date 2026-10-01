@@ -9,7 +9,7 @@ Everything runs on your machine. No audio is uploaded, transcribed or sent
 anywhere. The macOS app runs in the OS sandbox with no network access at all.
 The command line guards every analysis run from inside Python: it refuses the
 network and process routes it knows of and records the count, which must be 0
-(a Python-level guard, not a sandbox). For an OS-level block there too, run it under
+(a Python-level guard, not a sandbox). For an OS-level block there too on macOS, run it under
 `sandbox-exec -p '(version 1)(allow default)(deny network*)' .venv/bin/fpab check …`.
 
 ## What it checks
@@ -40,7 +40,7 @@ Breath analysis comes from [FinalPass](https://github.com/alexeymohr/FinalPass).
 ## Use
 
 Needs [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12 if needed) and git.
-Tested on macOS.
+Runs on macOS, Windows and Linux: the test suite runs on all three on every push.
 
 ```
 uv sync                         # every check, including the chopped-word model
