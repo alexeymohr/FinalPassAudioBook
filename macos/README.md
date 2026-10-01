@@ -31,7 +31,8 @@ macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 
 The script installs exactly the versions in `uv.lock` (and the hash-pinned build
 backends in `build-constraints.txt`), copies the real Python interpreter (never
 through a link), precompiles it, refuses to continue if any link points outside the
-bundle or any file names the building Mac's folders, and signs everything ad hoc for
+bundle, any file names the folders it was built from (the repo, the Python and the
+model it copied) or an untracked file sits in the package, and signs everything ad hoc for
 this Mac. Other Macs would need Developer ID signing and notarization, which it does
 not do.
 

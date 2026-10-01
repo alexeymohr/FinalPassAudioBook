@@ -11,9 +11,9 @@ enum Placement {
         var errorDescription: String? {
             switch self {
             case .needsFolderAccess(let folder, let inRun):
-                let why = inRun ? "another file in this run already uses that CSV name in “\(folder.lastPathComponent)”"
+                let why = inRun ? "another file in this run uses the same CSV name in “\(folder.lastPathComponent)”"
                     : "a CSV of that name already exists in “\(folder.lastPathComponent)” (it is never replaced)"
-                return why + "; allow access to that folder to save this one as “… (2).csv”"
+                return why + "; a numbered name there needs that folder: use “Save Unsaved CSVs…”, or Go again and allow it"
             }
         }
     }
@@ -30,7 +30,9 @@ enum Placement {
         defer { NSFileCoordinator.removeFilePresenter(presenter) }
         var result = false
         var err: NSError?
-        NSFileCoordinator(filePresenter: presenter).coordinate(readingItemAt: target, options: [], error: &err) { url in
+        NSFileCoordinator(filePresenter: presenter).coordinate(readingItemAt: target,
+                                                                options: .immediatelyAvailableMetadataOnly,
+                                                                error: &err) { url in
             result = exists(url)
         }
         return result
@@ -83,23 +85,42 @@ enum Placement {
         fatalError("unreachable: the numbered names never run out")
     }
 
-    /// Write `data` as a new file at `url` (never over anything). False when something was already
-    /// there. Any other failure is set in `failure`, and a file this write created part-way is removed
-    /// so no cut-off report is left (the full CSV stays kept by the app).
+    /// Write `data` as a new file at `url` (never over anything, never through a link). False when
+    /// something was already there. Any other failure is set in `failure`; a file this call created
+    /// and could not finish is removed — only that file (same device and inode as the one it opened),
+    /// never one another program put there meanwhile. The full CSV stays kept by the app.
     private static func writeNew(_ data: Data, to url: URL, failure: inout Error?) -> Bool {
-        let before = exists(url)
-        do {
-            try data.write(to: url, options: .withoutOverwriting)
-            return true
-        } catch {
-            let ns = error as NSError
-            if ns.code == NSFileWriteFileExistsError || (ns.domain == NSPOSIXErrorDomain && ns.code == Int(EEXIST)) {
-                return false
-            }
-            if !before && exists(url) { try? FileManager.default.removeItem(at: url) }
-            failure = error
-            return true
+        let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        if fd < 0 {
+            let e = errno
+            if e == EEXIST { return false }
+            failure = POSIXError(POSIXErrorCode(rawValue: e) ?? .EIO)
+            return true                                 // nothing was created: nothing to remove
         }
+        var mine = stat()
+        fstat(fd, &mine)
+        var writeErrno: Int32 = 0
+        data.withUnsafeBytes { (buf: UnsafeRawBufferPointer) in
+            guard let base = buf.baseAddress else { return }
+            var off = 0
+            while off < buf.count {
+                let n = write(fd, base + off, buf.count - off)
+                if n < 0 {
+                    if errno == EINTR { continue }
+                    writeErrno = errno
+                    return
+                }
+                off += n
+            }
+        }
+        if close(fd) != 0 && writeErrno == 0 { writeErrno = errno }
+        if writeErrno == 0 { return true }
+        var now = stat()
+        if lstat(url.path, &now) == 0 && now.st_dev == mine.st_dev && now.st_ino == mine.st_ino {
+            unlink(url.path)
+        }
+        failure = POSIXError(POSIXErrorCode(rawValue: writeErrno) ?? .EIO)
+        return true
     }
 
     // MARK: helpers

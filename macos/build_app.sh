@@ -48,6 +48,10 @@ sys.exit(0 if age >= d.timedelta(days=7) else f'exclude-newer {sys.argv[1]} is o
 if [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     echo "note: the working tree has uncommitted changes; they are what gets bundled"
 fi
+# Every file in the package that is not ignored goes into the app: an untracked one (a note, a dump
+# from calibration) must never ride along unseen.
+untracked="$(git -C "$REPO" status --porcelain --untracked-files=all -- src pyproject.toml 2>/dev/null | grep '^??' || true)"
+[ -z "$untracked" ] || { echo "$untracked"; die "untracked files under src/ would be bundled: commit, remove or ignore them"; }
 
 # The real interpreter directory behind the venv. uv's version folders are symlinks and everything
 # copied here gets re-signed, so resolve fully (never sign through a link) and refuse anything odd:

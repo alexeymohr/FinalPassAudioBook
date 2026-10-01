@@ -51,6 +51,15 @@ final class RunModel {
     init() {
         Self.sweepOldRuns()
         UserDefaults.standard.removeObject(forKey: "writtenCSVs")   // an earlier version's record of CSV paths
+        Self.forgetUnreachableFolders()
+    }
+
+    /// Saved per-folder access whose folder can no longer be found is dropped (the list names client
+    /// folders; a dropped one is simply asked for again if it is ever needed).
+    private static func forgetUnreachableFolders() {
+        guard let saved = UserDefaults.standard.dictionary(forKey: "folderAccess") as? [String: Data] else { return }
+        let kept = saved.filter { resolveBookmark($0.value, key: nil) != nil }
+        if kept.count != saved.count { UserDefaults.standard.set(kept, forKey: "folderAccess") }
     }
 
     // MARK: files
@@ -66,8 +75,12 @@ final class RunModel {
             if values?.isSymbolicLink == true {
                 links += 1                          // the sandbox grants the link, not what it points to
             } else if values?.isDirectory == true {
-                let inside = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isRegularFileKey],
-                                                          options: [.skipsHiddenFiles])) ?? []
+                let inside = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isRegularFileKey,
+                                                          .isSymbolicLinkKey], options: [.skipsHiddenFiles])) ?? []
+                links += inside.filter {
+                    Self.audioExtensions.contains($0.pathExtension.lowercased())
+                        && (try? $0.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+                }.count
                 let wavs = inside.filter { Self.isAudioFile($0) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
                 if wavs.isEmpty { emptyFolders.append(url.lastPathComponent) }
                 found += wavs
@@ -161,19 +174,29 @@ final class RunModel {
         return url
     }
 
-    /// Access to a WAV's own folder, for writing "<name> (2).csv" beside it (the sandbox allows only
-    /// "<name>.csv" otherwise). Remembered per folder; asked for once when needed.
-    private func folderAccess(for dir: URL, ask: Bool) -> URL? {
+    /// Access to a WAV's own folder, for writing "<name> (2).csv" and up beside it (the sandbox allows
+    /// only "<name>.csv" otherwise). Remembered per folder; asked for once when needed, and again when
+    /// a remembered grant no longer works.
+    private func folderAccess(for dir: URL, ask: Bool, shared: Bool) -> URL? {
         var saved = UserDefaults.standard.dictionary(forKey: "folderAccess") as? [String: Data] ?? [:]
-        if let url = Self.resolveBookmark(saved[dir.path], key: nil) { return url }
+        if let url = Self.resolveBookmark(saved[dir.path], key: nil) {
+            if url.startAccessingSecurityScopedResource() {
+                url.stopAccessingSecurityScopedResource()
+                return url
+            }
+            saved[dir.path] = nil                           // a grant that no longer works: ask again
+            UserDefaults.standard.set(saved, forKey: "folderAccess")
+        }
         guard ask else { return nil }
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.directoryURL = dir
         panel.prompt = "Allow"
-        panel.message = "A CSV with the name this app would use already exists in “\(dir.lastPathComponent)”. "
-            + "Allow this folder so the new report can be saved as “… (2).csv”. Existing files are never replaced."
+        panel.message = (shared ? "Two files in this run would use the same CSV name in “\(dir.lastPathComponent)”. "
+                         : "A CSV with the name this app would use already exists in “\(dir.lastPathComponent)”. ")
+            + "Allow this folder so the new report can be saved under a numbered name (“… (2).csv” or higher). "
+            + "Existing files are never replaced."
         guard panel.runModal() == .OK, let url = panel.url,
               url.standardizedFileURL.path == dir.standardizedFileURL.path,
               let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil,
@@ -212,7 +235,7 @@ final class RunModel {
             errorText = "Could not create a working folder: \(error.localizedDescription)"
             return
         }
-        items.forEach(discardKept)                  // agreed above; the run is about to start
+        let previous = items                        // kept reports are discarded once the engine runs
         for i in items.indices {
             items[i].state = .waiting
             items[i].csv = nil
@@ -235,11 +258,14 @@ final class RunModel {
         exit.attach(to: p)
         do { try p.run() } catch {
             errorText = "Could not start the engine: \(error.localizedDescription)"
+            items = previous                        // nothing ran: the list (and its kept reports) as it was
+            status = "Not started."
             try? fm.removeItem(at: work)
             workDir = nil
             endAutorunIfNeeded()
             return
         }
+        previous.forEach(discardKept)               // agreed above, and the run has started
         running = true
         process = p
         let stdout = out.fileHandleForReading
@@ -261,16 +287,17 @@ final class RunModel {
     /// can be written.
     private func preflightBesideWAVs() {
         var seen = Set<String>()
-        var needFolders: [URL] = []
+        var needFolders: [(dir: URL, shared: Bool)] = []
         for item in items {
             let key = Self.key(Placement.besideTarget(for: item.url))
-            let clash = seen.contains(key) || Placement.existsBeside(item.url)
+            let shared = seen.contains(key)
+            let clash = shared || Placement.existsBeside(item.url)
             seen.insert(key)
             let dir = item.url.deletingLastPathComponent()
-            if clash && !needFolders.contains(where: { $0.path == dir.path }) { needFolders.append(dir) }
+            if clash && !needFolders.contains(where: { $0.dir.path == dir.path }) { needFolders.append((dir, shared)) }
         }
-        for dir in needFolders {
-            if let url = folderAccess(for: dir, ask: !quitWhenDone) { altFolders[dir.path] = url }
+        for (dir, shared) in needFolders {
+            if let url = folderAccess(for: dir, ask: !quitWhenDone, shared: shared) { altFolders[dir.path] = url }
         }
     }
 
@@ -296,10 +323,16 @@ final class RunModel {
         p.terminate()
     }
 
-    /// Quit while running: stop the engine and remove the working folder.
+    /// Quit while running: stop the engine (forcibly if it has not stopped within 3 s, e.g. stuck on a
+    /// network volume) and remove the working folder.
     func stopForQuit() {
         cancel()
-        process?.waitUntilExit()
+        if let p = process {
+            let deadline = Date().addingTimeInterval(3)
+            while p.isRunning && Date() < deadline { usleep(50_000) }
+            if p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            p.waitUntilExit()
+        }
         if let workDir { try? FileManager.default.removeItem(at: workDir) }
     }
 
@@ -377,6 +410,7 @@ final class RunModel {
             guard let alt = altFolders[dir.path] else { throw Placement.Failure.needsFolderAccess(dir, nameTakenInRun: inRun) }
             let granted = alt.startAccessingSecurityScopedResource()
             defer { if granted { alt.stopAccessingSecurityScopedResource() } }
+            guard granted else { throw Placement.Failure.needsFolderAccess(dir, nameTakenInRun: inRun) }
             return try Placement.intoFolder(csv, folder: alt, stem: stem, taken: &taken)
         }
     }
@@ -498,11 +532,12 @@ final class RunModel {
         }
     }
 
-    /// Reports an earlier session could not place (it quit or stopped first), not a running copy's.
-    private static func leftoverReports() -> (entries: [URL], csvs: [URL]) {
+    /// Reports an earlier session could not place (it quit or stopped first), not a running copy's:
+    /// each kept entry (a folder, or a file an earlier version kept one level up) with its CSVs.
+    private static func leftoverReports() -> [(entry: URL, csvs: [URL])] {
         let fm = FileManager.default
-        guard let root = unsavedRoot else { return ([], []) }
-        var entries: [URL] = [], csvs: [URL] = []
+        guard let root = unsavedRoot else { return [] }
+        var out: [(entry: URL, csvs: [URL])] = []
         for entry in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
             var isDir: ObjCBool = false
             fm.fileExists(atPath: entry.path, isDirectory: &isDir)
@@ -512,21 +547,21 @@ final class RunModel {
                     continue                                    // a running copy's
                 }
                 let inside = (try? fm.contentsOfDirectory(at: entry, includingPropertiesForKeys: nil)) ?? []
-                csvs += inside.filter { $0.pathExtension.lowercased() == "csv" }
-            } else if entry.pathExtension.lowercased() == "csv" {
-                csvs.append(entry)                              // kept by an earlier version, one level up
+                out.append((entry, inside.filter { $0.pathExtension.lowercased() == "csv" }))
+            } else {
+                out.append((entry, entry.pathExtension.lowercased() == "csv" ? [entry] : []))
             }
-            entries.append(entry)
         }
-        return (entries, csvs)
+        return out
     }
 
     /// At launch: offer reports an earlier session could not place — they are never thrown away unasked.
     func offerLeftoverReports() {
-        let (entries, csvs) = Self.leftoverReports()
-        guard !entries.isEmpty else { return }
+        let leftovers = Self.leftoverReports()
+        guard !leftovers.isEmpty else { return }
         let fm = FileManager.default
-        guard !csvs.isEmpty else { entries.forEach { try? fm.removeItem(at: $0) }; return }
+        let csvs = leftovers.flatMap(\.csvs)
+        guard !csvs.isEmpty else { leftovers.forEach { try? fm.removeItem(at: $0.entry) }; return }
         let alert = NSAlert()
         alert.messageText = "\(csvs.count) report\(csvs.count == 1 ? " was" : "s were") never saved."
         alert.informativeText = "The app closed before \(csvs.count == 1 ? "it" : "they") could be placed. "
@@ -542,17 +577,24 @@ final class RunModel {
             panel.canCreateDirectories = true
             panel.prompt = "Save Here"
             guard panel.runModal() == .OK, let dir = panel.url else { return }
-            var all = true
-            for csv in csvs {
-                let stem = csv.deletingPathExtension().lastPathComponent
-                let dest = (1...).lazy.map { k in dir.appendingPathComponent(k == 1 ? "\(stem).csv" : "\(stem) (\(k)).csv") }
-                    .first { !fm.fileExists(atPath: $0.path) && (try? fm.destinationOfSymbolicLink(atPath: $0.path)) == nil }!
-                if (try? fm.copyItem(at: csv, to: dest)) == nil { all = false }
+            var used = Set<String>(), saved = 0, failed = 0
+            for (entry, kept) in leftovers {
+                var placedAll = true
+                for csv in kept {                       // the same naming as every other save: never over a file
+                    let stem = csv.deletingPathExtension().lastPathComponent
+                    if (try? Placement.intoFolder(csv, folder: dir, stem: stem, taken: &used)) != nil {
+                        saved += 1
+                    } else {
+                        placedAll = false
+                        failed += 1
+                    }
+                }
+                if placedAll { try? fm.removeItem(at: entry) }  // only what was saved leaves the app's storage
             }
-            if all { entries.forEach { try? fm.removeItem(at: $0) } }
-            status = all ? "Saved \(csvs.count) earlier report\(csvs.count == 1 ? "" : "s")." : "Some earlier reports could not be saved."
+            status = failed == 0 ? "Saved \(saved) earlier report\(saved == 1 ? "" : "s")."
+                : "\(failed) earlier report\(failed == 1 ? "" : "s") could not be saved; offered again next time."
         case .alertThirdButtonReturn:
-            entries.forEach { try? fm.removeItem(at: $0) }
+            leftovers.forEach { try? fm.removeItem(at: $0.entry) }
         default:
             break                                               // Later: offered again next time
         }
