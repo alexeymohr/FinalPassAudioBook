@@ -1,6 +1,7 @@
 """Synthesized narration-like audio for tests. Never real recordings."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,12 @@ from finalpass.audio_io import AudioFile
 from scipy.signal import butter, sosfilt
 
 from finalpass_audiobook.chapter import Chapter
+
+POSIX = os.name == "posix"
+# permission bits keep this process out of a file (not on Windows, not for root)
+CAN_LOCK = POSIX and not (hasattr(os, "geteuid") and os.geteuid() == 0)
+LOCKS = "permission bits do not lock a file here (Windows, or root)"
+LINKS = "symlinks and long names need special rights on Windows"
 
 SR = 44100
 SEED = 20260928

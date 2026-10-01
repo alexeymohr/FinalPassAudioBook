@@ -14,7 +14,7 @@ from click.testing import CliRunner
 from finalpass_audiobook.cli import main
 from finalpass_audiobook.output import _cell, is_ours, report_source
 from report_csv import read_report
-from synth import SR, phrase, room
+from synth import CAN_LOCK, LINKS, LOCKS, POSIX, SR, phrase, room
 
 
 def _wav(path: Path) -> Path:
@@ -53,6 +53,7 @@ def test_a_per_file_csv_never_takes_a_run_report_name(tmp_path: Path) -> None:
     assert (tmp_path / "issues.csv").read_text(encoding="utf-8-sig").startswith("file,start_time")
 
 
+@pytest.mark.skipif(not POSIX, reason=LINKS)
 @pytest.mark.parametrize("dangling", [True, False])
 def test_a_csv_is_never_written_through_a_symlink(tmp_path: Path, dangling: bool) -> None:
     a = _wav(tmp_path / "in" / "ch01.wav")
@@ -115,7 +116,7 @@ def test_a_header_that_only_starts_like_ours_is_not_ours(tmp_path: Path) -> None
     assert not is_ours(p)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+@pytest.mark.skipif(not CAN_LOCK, reason=LOCKS)
 def test_an_unreadable_file_is_skipped_and_the_batch_goes_on(tmp_path: Path) -> None:
     a, b = _wav(tmp_path / "a.wav"), _wav(tmp_path / "b.wav")
     b.chmod(0)
@@ -236,6 +237,7 @@ def test_running_out_of_names_is_a_note_and_exit_1(tmp_path: Path, monkeypatch) 
     assert r.exit_code == 1 and "every name tried was taken" in r.output
 
 
+@pytest.mark.skipif(not POSIX, reason=LINKS)
 def test_a_csv_folder_that_is_a_broken_link_is_a_note_and_exit_1(tmp_path: Path) -> None:
     a = _wav(tmp_path / "a.wav")
     (tmp_path / "csvs").symlink_to(tmp_path / "unmounted")
@@ -243,6 +245,7 @@ def test_a_csv_folder_that_is_a_broken_link_is_a_note_and_exit_1(tmp_path: Path)
     assert r.exit_code == 1 and "is not a folder" in r.output
 
 
+@pytest.mark.skipif(not CAN_LOCK, reason=LOCKS)
 def test_a_csv_that_cannot_be_written_makes_text_mode_exit_1(tmp_path: Path) -> None:
     a = _wav(tmp_path / "in" / "a.wav")
     out = tmp_path / "ro"
@@ -317,6 +320,7 @@ def test_a_shared_csv_folder_never_takes_another_wavs_own_name(tmp_path: Path) -
     assert report_source(tmp_path / "bookB" / "ch01 (2).csv")[1] == str((tmp_path / "bookA").resolve())
 
 
+@pytest.mark.skipif(not POSIX, reason=LINKS)
 def test_a_name_too_long_to_number_is_a_note_and_the_batch_goes_on(tmp_path: Path) -> None:
     long = _wav(tmp_path / ("x" * 250 + ".wav"))
     other = _wav(tmp_path / "b.wav")
@@ -327,6 +331,7 @@ def test_a_name_too_long_to_number_is_a_note_and_the_batch_goes_on(tmp_path: Pat
     assert done[1]["csv"]
 
 
+@pytest.mark.skipif(not POSIX, reason=LINKS)
 def test_names_are_planned_past_files_links_and_this_run(tmp_path: Path) -> None:
     from finalpass_audiobook.cli import _csv_targets
     a, b = _wav(tmp_path / "one" / "ch01.wav"), _wav(tmp_path / "two" / "ch01.wav")
@@ -337,7 +342,7 @@ def test_names_are_planned_past_files_links_and_this_run(tmp_path: Path) -> None
     assert [p.name for p in _csv_targets([a, b], out)] == ["ch01 (3).csv", "ch01 (4).csv"]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+@pytest.mark.skipif(not CAN_LOCK, reason=LOCKS)
 def test_an_unreadable_folder_is_a_skipped_entry_and_the_rest_runs(tmp_path: Path) -> None:
     a = _wav(tmp_path / "a.wav")
     locked = tmp_path / "locked"

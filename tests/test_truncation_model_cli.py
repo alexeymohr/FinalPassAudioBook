@@ -16,7 +16,7 @@ from finalpass_audiobook.checks.truncation import (TRUNCATION_SEVERITY, Truncati
                                                    score_phrase_ends, truncation_findings)
 from finalpass_audiobook.cli import main
 from finalpass_audiobook.netguard import NetworkAccessDenied, NetworkGuard
-from synth import SR, chapter, phrase, room
+from synth import CAN_LOCK, LOCKS, SR, chapter, phrase, room
 
 
 class _FakeModel:
@@ -87,9 +87,8 @@ def test_weights_of_the_right_size_but_other_bytes_are_refused_at_load(tmp_path:
 
 
 def test_unreadable_weights_are_a_model_error_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import os
-    if os.geteuid() == 0:
-        pytest.skip("root reads everything")
+    if not CAN_LOCK:
+        pytest.skip(LOCKS)
     w = _weights(tmp_path, monkeypatch, b"z" * 64)
     w.chmod(0)
     try:
@@ -219,9 +218,8 @@ def test_the_size_is_checked_before_the_weights_are_read(tmp_path: Path, monkeyp
 
 def test_an_unreadable_model_folder_skips_the_check_without_a_crash(tmp_path: Path,
                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
-    import os
-    if os.geteuid() == 0:
-        pytest.skip("root reads everything")
+    if not CAN_LOCK:
+        pytest.skip(LOCKS)
     d = tmp_path / "models"
     d.mkdir()
     monkeypatch.setenv("FPAB_MODEL_DIR", str(d))

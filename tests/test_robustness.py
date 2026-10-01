@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 import soundfile as sf
 from click.testing import CliRunner
 
 from finalpass_audiobook.chapter import Chapter
 from finalpass_audiobook.cli import main
-from synth import SR, phrase, room
+from synth import CAN_LOCK, LOCKS, SR, phrase, room
 
 
 def _wav(path: Path, x: np.ndarray | None = None, subtype: str = "PCM_24") -> Path:
@@ -114,6 +115,7 @@ def test_skipped_files_appear_in_issues_csv_and_in_the_exit_code(tmp_path: Path)
     assert len(rows) == 2 and rows[1].startswith("broken.wav") and "skipped" in rows[1]
 
 
+@pytest.mark.skipif(not CAN_LOCK, reason=LOCKS)
 def test_a_read_only_destination_is_a_note_and_the_batch_goes_on(tmp_path: Path) -> None:
     a, b = _wav(tmp_path / "in" / "a.wav"), _wav(tmp_path / "in" / "b.wav")
     out = tmp_path / "ro"

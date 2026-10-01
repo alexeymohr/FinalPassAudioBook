@@ -1,0 +1,37 @@
+# The test suite on macOS, Windows and Linux. Synthetic audio only; no model weights are fetched
+# (the chopped-word tests use a stand-in). Actions are pinned to commit hashes, and uv installs
+# exactly the versions in uv.lock (published before pyproject's exclude-newer cutoff).
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        with:
+          version: "0.11.7"
+          enable-cache: false
+      - name: Install (exactly uv.lock)
+        run: uv sync --locked
+      - name: Tests
+        run: uv run --locked pytest -q -p no:cacheprovider
+      - name: Command line works
+        shell: bash
+        run: uv run --locked fpab --help && uv run --locked fpab rules

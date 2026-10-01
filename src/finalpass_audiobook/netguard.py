@@ -44,18 +44,24 @@ class NetworkAccessDenied(RuntimeError):
 _NET_EVENTS = {"socket.__new__", "socket.connect", "socket.sendto", "socket.sendmsg", "socket.bind",
                "socket.getaddrinfo", "socket.gethostbyname", "socket.gethostbyaddr", "socket.getnameinfo"}
 _PROCESS_EVENTS = {"subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.posix_spawn", "os.fork",
-                   "os.forkpty", "pty.spawn"}
+                   "os.forkpty", "pty.spawn",
+                   "_winapi.CreateProcess", "os.startfile"}   # Windows: what subprocess and multiprocessing use
 _NET_SYMBOLS = {"connect", "connectx", "send", "sendto", "sendmsg", "sendmsg_x", "socket", "bind",
                 "getaddrinfo", "gethostbyname", "gethostbyname2", "gethostbyaddr", "getnameinfo",
                 "res_query", "res_search", "res_send",
                 "getaddrinfo_async_start", "getaddrinfo_async_handle_reply",
                 # starting a process from C: as good as a way out
                 "system", "popen", "fork", "vfork", "execv", "execve", "execvp", "execvP", "execvpe", "execl",
-                "execle", "execlp", "posix_spawn", "posix_spawnp"}
+                "execle", "execlp", "posix_spawn", "posix_spawnp",
+                # Windows
+                "WinExec", "GetAddrInfoW", "GetAddrInfoExW"}
 _NET_SYMBOL_PREFIXES = ("curl_", "SSL_", "nw_", "DNSService", "CFSocket", "CFStream", "CFHost", "CFNetwork",
-                        "CFURL", "CFReadStreamCreateFor", "CFWriteStreamCreateFor")
+                        "CFURL", "CFReadStreamCreateFor", "CFWriteStreamCreateFor",
+                        # Windows
+                        "WSA", "CreateProcess", "ShellExecute", "WinHttp", "Internet", "HttpSendRequest",
+                        "HttpOpenRequest", "URLDownload", "URLOpen")
 _NET_LIBRARIES = ("curl", "libssl", "libcrypto", "cfnetwork", "network.framework", "libresolv", "coreservices",
-                  "libsystem_dnssd")
+                  "libsystem_dnssd", "ws2_32", "wininet", "winhttp", "urlmon", "dnsapi")
 
 _lock = threading.Lock()
 _active: list["NetworkGuard"] = []
