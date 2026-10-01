@@ -17,6 +17,7 @@ from finalpass.timecode import samples_to_clock
 from scipy.signal import resample_poly
 
 DUAL_MONO_TOLERANCE = 4 / 32768   # a few 16-bit steps: per-channel dither still counts as dual mono
+MAX_SAMPLE = 16.0                 # +24 dBFS: a float sample beyond this is corrupt, not loud audio
 ENV_BIN_MS = 1.0          # fine envelope hop
 BLOCK = 1 << 22           # samples per block when squaring the whole file
 LOW_RATE_HZ = 4400.0      # decimated signal for low-frequency checks
@@ -59,14 +60,17 @@ class Chapter:
 
     @classmethod
     def load(cls, path: Path) -> "Chapter":
+        if path.is_dir():
+            raise ChapterError(f"{path.name}: a folder that could not be read")
         if not path.is_file():
             raise ChapterError(f"{path.name}: file not found")
         audio = read_wav(path)
         x, notes = to_mono(audio)
-        bad = np.flatnonzero(~np.isfinite(x))
+        ok = np.isfinite(x) & (np.abs(np.nan_to_num(x)) <= MAX_SAMPLE)
+        bad = np.flatnonzero(~ok)
         if bad.size:                    # one NaN would otherwise silently disable most checks
-            x = np.where(np.isfinite(x), x, 0.0)
-            notes.append(f"{bad.size} invalid (NaN/Inf) samples set to zero for analysis")
+            x = np.where(ok, x, 0.0)
+            notes.append(f"{bad.size} invalid (NaN, Inf or out-of-range) samples set to zero for analysis")
         return cls(path=path, audio=audio, x=x, sr=audio.sample_rate, notes=notes, invalid_samples=bad)
 
     @property

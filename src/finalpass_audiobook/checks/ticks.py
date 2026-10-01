@@ -54,13 +54,38 @@ def _db(v: float) -> float:
     return 20.0 * np.log10(max(float(v), 1e-12))
 
 
+HP_BLOCK, HP_PAD = 1 << 21, 8192
+
+
+TOP_HZ = 22050.0                        # the band the limits were set on (44.1/48 kHz audio)
+
+
+def _highpass(x: np.ndarray, sr: float, hz: float) -> np.ndarray:
+    """Zero-phase high-pass in overlapping blocks: the same result (the filter rings for far less
+    than the overlap), without the many full-length copies one pass over a long file needs. At high
+    rates the band also stops at 22.05 kHz, so it is the band the limits were set on."""
+    sos = butter(8, hz, "highpass", fs=sr, output="sos")
+    if sr / 2 > 1.1 * TOP_HZ:
+        sos = np.concatenate([sos, butter(8, TOP_HZ, "lowpass", fs=sr, output="sos")])
+    if len(x) <= HP_BLOCK + 2 * HP_PAD:
+        return sosfiltfilt(sos, x)
+    out = np.empty_like(x)
+    for a in range(0, len(x), HP_BLOCK):
+        b = min(len(x), a + HP_BLOCK)
+        lo, hi = max(0, a - HP_PAD), min(len(x), b + HP_PAD)
+        out[a:b] = sosfiltfilt(sos, x[lo:hi])[a - lo:a - lo + (b - a)]
+    return out
+
+
 def tick_findings(ch: Chapter, t: TickTunables = TickTunables()) -> list[Finding]:
-    sr, x = ch.sr, ch.x.astype(np.float64)
+    """At 88.2 kHz and up only 16.5-22.05 kHz is looked at (see _highpass): a step into silence
+    carries far more above that at a high rate, which no 44.1/48 kHz tick limit was set for."""
+    sr, x = ch.sr, np.asarray(ch.x, dtype=np.float64)          # no copy when it already is
     if t.above_hz >= 0.95 * sr / 2 or len(x) < sr // 10:
         return []                        # nothing above the voice to look at at this rate
-    hp = sosfiltfilt(butter(8, t.above_hz, "highpass", fs=sr, output="sos"), x)
+    hp = _highpass(x, sr, t.above_hz)
     thr = 10 ** (t.min_hf_dbfs / 20)
-    loud = np.flatnonzero(np.abs(hp) >= thr)
+    loud = np.flatnonzero((hp >= thr) | (hp <= -thr))          # no full-length |hp| copy
     if not loud.size:
         return []
     own, side = max(1, int(t.own_ms * sr / 1000)), int(t.side_ms * sr / 1000)
@@ -70,26 +95,35 @@ def tick_findings(ch: Chapter, t: TickTunables = TickTunables()) -> list[Finding
     out: list[Finding] = []
     for g in groups:
         j = int(g[np.argmax(np.abs(hp[g]))])
-        if j - side - own < 1 or j + side + own + 2 >= len(x):
+        # judged on both sides; within 10 ms of the file's start or end, on the one side there is
+        left, right = j - side - own - 1 >= 0, j + side + own + 2 <= len(x)
+        if not (left or right):
             continue
         p = abs(hp[j])
         w2 = int(0.002 * sr)
-        near = np.abs(hp[j - w2:j + w2 + 1])
+        near = np.abs(hp[max(0, j - w2):j + w2 + 1])
         half = np.flatnonzero(near >= 0.5 * p)
         width = int(half[-1] - half[0] + 1)
         if width > width_max:
             continue
-        rest = max(np.abs(hp[j - side:j - own]).max(), np.abs(hp[j + own:j + side]).max())
+        rest = max(([np.abs(hp[j - side:j - own]).max()] if left else [])
+                   + ([np.abs(hp[j + own:j + side]).max()] if right else []))
         iso = _db(p) - _db(rest)
         if iso < t.min_isolation_db:
             continue
-        dy = np.abs(np.diff(x[j - side - 1:j + side + 1]))
-        c = side + 1
-        step = dy[c - 3:c + 2].max()
-        other = max(dy[:c - own].max(), dy[c + own:].max())
+        # sample steps over the span of one 44.1 kHz sample (the same as plain steps at 44.1/48 kHz):
+        # at a high rate a voice moves less per sample, which no limit set at 44.1 kHz expects
+        lag = 1 if sr <= 48000 else int(np.ceil(sr / 44100))   # at least one 44.1 kHz sample long
+        a0 = max(0, j - side - lag)
+        seg = x[a0:min(len(x), j + side + 1)]
+        dy = np.abs(seg[lag:] - seg[:-lag])
+        c = j - a0
+        step = dy[max(0, c - 2 - lag):c + 2].max()
+        other = max((d.max() for d in (dy[:max(0, c - own - lag + 1)] if left else dy[:0],
+                                        dy[c + own:] if right else dy[:0]) if d.size), default=0.0)
         if step < other:
             continue
-        pk = _db(np.abs(x[j - own:j + own + 1]).max())
+        pk = _db(np.abs(x[max(0, j - own):j + own + 1]).max())
         out.append(Finding(
             file=ch.name, check="ticks", start_sample=j, end_sample=j + 1, start_time=ch.clock(j),
             end_time=ch.clock(j + 1), severity=TICK_SEVERITY, problem="digital tick",

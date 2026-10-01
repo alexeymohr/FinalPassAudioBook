@@ -24,8 +24,11 @@ def _expand(paths: tuple[Path, ...]) -> list[Path]:
     files: list[Path] = []
     seen: set = set()
     for p in paths:
-        found = (sorted(q for q in p.iterdir() if q.suffix.lower() in AUDIO_SUFFIXES and not q.name.startswith("."))
-                 if p.is_dir() else [p])
+        try:
+            found = (sorted(q for q in p.iterdir() if q.suffix.lower() in AUDIO_SUFFIXES and not q.name.startswith("."))
+                     if p.is_dir() else [p])
+        except OSError:
+            found = [p]                         # a folder that cannot be read: skipped with a note, like a bad file
         for q in found:
             try:
                 st = q.stat()
@@ -44,32 +47,45 @@ def main() -> None:
     """FinalPassAudioBook: local, offline QC for audiobook chapters."""
 
 
-def _pick(first: Path, seen: set[str]) -> Path:
+MAX_NUMBERED = 10_000
+
+
+def _pick(first: Path, seen: set[str], wav: Path | None = None) -> Path:
     """`first`, or the first of `first (2)`, `(3)`, … where nothing exists yet (an earlier report is
-    never replaced), not taken in this run (`seen`) and not another audio file's own CSV name there."""
+    never replaced), not taken in this run (`seen`) and not another audio file's own CSV name there
+    (`wav`: the file this CSV is for, whose own name it may take). OSError when no name can be had
+    (a name too long for the file system, a folder that cannot be searched)."""
     from .output import _real, is_free, name_key
 
-    def audio_named(folder: Path, stem: str) -> bool:
-        return any((folder / f"{stem}{s}").exists() for s in (*AUDIO_SUFFIXES, *(x.upper() for x in AUDIO_SUFFIXES)))
+    def audio_named(target: Path) -> bool:
+        others = [target.with_suffix(s) for s in (*AUDIO_SUFFIXES, *(x.upper() for x in AUDIO_SUFFIXES))]
+        return any(o.exists() and (wav is None or not o.samefile(wav)) for o in others)
 
-    target, k = first, 2
-    while name_key(_real(target)) in seen or not is_free(target):
-        target = first.with_name(f"{first.stem} ({k}){first.suffix}")
-        k += 1
-        while audio_named(target.parent, target.stem):
-            target = first.with_name(f"{first.stem} ({k}){first.suffix}")
-            k += 1
-    return target
+    for k in range(1, MAX_NUMBERED):
+        target = first if k == 1 else first.with_name(f"{first.stem} ({k}){first.suffix}")
+        if len(target.name.encode()) > 255:
+            raise OSError(f"no CSV name for {first.stem!r}: the numbered name would be too long")
+        if name_key(_real(target)) in seen or not is_free(target) or audio_named(target):
+            continue
+        return target
+    raise OSError(f"no free CSV name for {first.stem!r} after {MAX_NUMBERED} tries")
 
 
-def _csv_targets(files: list[Path], csv_dir: Path | None, reserved: tuple[Path, ...] = ()) -> list[Path]:
+def _csv_targets(files: list[Path], csv_dir: Path | None,
+                 reserved: tuple[Path, ...] = ()) -> list[Path | OSError]:
     """Where each file's CSV goes: beside the WAV, or into csv_dir (see `_pick`) — always a new file.
-    `reserved`: the run report's files."""
+    `reserved`: the run report's files. A file whose CSV cannot be named gets the error instead (a
+    note on that file when it is done; the batch goes on)."""
     from .output import _real, csv_name, name_key
 
-    out, seen = [], {name_key(_real(p)) for p in reserved}
+    out: list[Path | OSError] = []
+    seen = {name_key(_real(p)) for p in reserved}
     for f in files:
-        target = _pick((csv_dir or f.parent) / csv_name(f), seen)
+        try:
+            target = _pick((csv_dir or f.parent) / csv_name(f), seen, f)
+        except OSError as exc:
+            out.append(exc)
+            continue
         seen.add(name_key(_real(target)))
         out.append(target)
     return out
@@ -131,7 +147,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         sys.exit(2)
     reserved = tuple(out_dir / n for n in RUN_FILES) if out_dir is not None else ()
     targets = _csv_targets(files, csv_dir, reserved) if per_file else []
-    planned = {name_key(_real(p)) for p in (*reserved, *targets)}
+    planned = {name_key(_real(p)) for p in (*reserved, *targets) if isinstance(p, Path)}
     opts = RunOptions(rules=RULE_SETS[rules_name], truncation=not no_truncation)
     jsonl = progress_mode == "jsonl"
     say = err if jsonl else out
@@ -148,22 +164,28 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                    "analysed": datetime.now().strftime("%Y-%m-%d %H:%M")}
     failed_csv: list[int] = []
 
-    def model_loaded(ok: bool) -> None:     # what every CSV says: whether the model really ran
+    def model_loaded(ok: bool, why: str = "") -> None:   # what every CSV says: whether the model really ran
         if opts.truncation:
             csv_context["chopped-word check"] = "on" if ok else (
-                "off (model not installed)" if not installed() else "off (model could not be loaded; see notes)")
+                "off (model not installed)" if not installed() else f"off (model could not be loaded: {why})")
+        if not ok and "chopped words" in stages:        # the progress no longer counts a step that never comes
+            stages.remove("chopped words")
 
     def file_done(i: int, fr) -> None:
         csv_path = None
         if per_file and fr.sample_rate:
             try:
+                if isinstance(targets[i], OSError):
+                    raise targets[i]
                 for _ in range(100):            # a file that appeared there during the run: the next name
                     try:
                         csv_path = written_csv[i] = str(file_csv(fr, targets[i], with_pauses, csv_context))
                         break
                     except FileExistsError:
-                        targets[i] = _pick((csv_dir or files[i].parent) / csv_name(files[i]), planned)
+                        targets[i] = _pick((csv_dir or files[i].parent) / csv_name(files[i]), planned, files[i])
                         planned.add(name_key(_real(targets[i])))
+                else:
+                    raise OSError("every name tried was taken while it was being written")
             except Exception as exc:        # an unwritable CSV is a note on this file, not the end of the run
                 fr.notes.append(f"could not write the CSV: {exc}")
                 failed_csv.append(i)
@@ -199,7 +221,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
         worst = max((f.severity for f in fr.findings), default=0)
         colour = "red" if not fr.sample_rate else {3: "red", 2: "yellow", 1: "cyan"}.get(worst, "green")
         say.print(f"[{colour}]{escape(fr.file)}[/{colour}]  {tally(fr.findings)}"
-                  + "".join(f"  [dim]({escape(n)})[/dim]" for n in fr.notes))
+                  + "".join(f"  [dim]({escape(n)})[/dim]" for n in fr.notes), soft_wrap=True)
     say.print(f"network attempts: {report.network_attempts}")
     for p in [*written, *written_csv.values()]:
         say.print(escape(f"Wrote {p}"), soft_wrap=True)

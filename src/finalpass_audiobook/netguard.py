@@ -20,7 +20,8 @@ interpreter, and its ctypes lists name the common routes, not every one. Native 
 opened before the guard (a run opens none), is beyond it — and code in the same
 process could switch it off. The macOS app's OS sandbox (no network entitlement)
 is the hard boundary; the command line can be run under an OS sandbox too (see
-the README). Every report records the count, which must be 0. An audit hook
+the README). Every run records the count (report.json, the terminal, the app's
+status line), which must be 0. An audit hook
 cannot be removed, so the hook is installed once and does nothing while no guard
 is active.
 """

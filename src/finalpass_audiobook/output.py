@@ -72,7 +72,7 @@ def issues_text(report: RunReport, min_sev: int = 1) -> str:
     lines += [f"note: {n}" for n in report.notes]
     for fr in report.files:
         rows = shown(fr.findings, min_sev)
-        lines += ["", f"== {fr.file} — {tally(rows)}"]
+        lines += ["", f"== {fr.file} — {tally(fr.findings)}"]          # every finding counted, listed or not
         lines += [f"   note: {n}" for n in fr.notes]
         lines += [f"   {f.start_time}  sev {f.severity}  {f.problem}" for f in rows]
     return "\n".join(lines) + "\n"
@@ -119,14 +119,33 @@ def run_report_clashes(out_dir: Path) -> list[Path]:
     return [p for p in (out_dir / n for n in RUN_FILES) if (p.exists() or p.is_symlink()) and not run_file_is_ours(p)]
 
 
+class _Whole:
+    """Write `path` to a hidden file beside it, then move it into place in one step: an interrupted
+    write never leaves a cut-off report there (which a later run would take for someone else's), and
+    a symlink planted at `path` is replaced, never followed."""
+
+    def __init__(self, path: Path, encoding: str = "utf-8") -> None:
+        self.path, self.tmp = path, path.with_name(f".{path.name}.{os.getpid()}.part")
+        self.fh = _open_write(self.tmp, encoding, new=True)
+
+    def __enter__(self):
+        return self.fh
+
+    def __exit__(self, kind, *_) -> None:        # noqa: ANN001
+        self.fh.close()
+        if kind is None:
+            os.replace(self.tmp, self.path)
+        else:
+            self.tmp.unlink(missing_ok=True)
+
+
 def write(report: RunReport, out_dir: Path, min_sev: int = 1) -> list[Path]:
-    """The run report. The caller checks `run_report_clashes` first; a file planted here since is
-    still never followed through a symlink."""
+    """The run report. The caller checks `run_report_clashes` first (before and after the run)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = [out_dir / n for n in RUN_FILES]
-    with _open_write(paths[0]) as fh:
+    with _Whole(paths[0]) as fh:
         fh.write(issues_text(report, min_sev))
-    with _open_write(paths[1], CSV_ENCODING) as fh:
+    with _Whole(paths[1], CSV_ENCODING) as fh:
         w = csv.writer(fh)
         w.writerow(ISSUE_COLUMNS)
         for fr in report.files:
@@ -134,15 +153,15 @@ def write(report: RunReport, out_dir: Path, min_sev: int = 1) -> list[Path]:
                 w.writerow([_cell(fr.file), "", "", _cell("; ".join(fr.notes) or "skipped"), "", "file", ""])
             for f in shown(fr.findings, min_sev):
                 w.writerow(_row(f))
-    with _open_write(paths[2]) as fh:
+    with _Whole(paths[2]) as fh:
         fh.write(pauses_text(report))
-    with _open_write(paths[3], CSV_ENCODING) as fh:
+    with _Whole(paths[3], CSV_ENCODING) as fh:
         w = csv.writer(fh)
         w.writerow(PAUSE_COLUMNS)
         for fr in report.files:
             for p in listed(fr.pauses):
-                w.writerow([_cell(fr.file), p.start_time, f"{p.duration_ms / 1000:.3f}", p.guess, p.kind])
-    with _open_write(paths[4]) as fh:
+                w.writerow([_cell(fr.file), p.start_time, f"{p.duration_ms / 1000:.2f}", p.guess, p.kind])  # as guessed
+    with _Whole(paths[4]) as fh:
         fh.write(report.model_dump_json(indent=2))
     return paths
 
@@ -164,7 +183,7 @@ def _real(p: Path) -> Path:
     """`p` with its folder's symlinks resolved (the file itself need not exist)."""
     try:
         return p.parent.resolve() / p.name
-    except OSError:
+    except (OSError, RuntimeError):             # RuntimeError: a symlink loop (Python 3.12)
         return p.absolute()
 
 
@@ -199,8 +218,12 @@ def is_ours(path: Path) -> bool:
 
 def is_free(target: Path) -> bool:
     """Nothing at all is at `target` — not a file (ours or anyone's), a folder or a link. A per-file
-    CSV is only ever written as a new file (operator): an earlier report is never replaced."""
-    return not (target.exists() or target.is_symlink())
+    CSV is only ever written as a new file (operator): an earlier report is never replaced. A name
+    that cannot be looked at counts as taken."""
+    try:
+        return not (target.exists() or target.is_symlink())
+    except OSError:
+        return False
 
 
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "'")   # "'" too, so the guard always reads back
@@ -263,7 +286,10 @@ def file_csv(fr: FileResult, path: Path, with_pauses: bool = False, context: dic
                                     f"kind={p.kind}; duration_s={p.duration_ms / 1000:.3f}"]) for p in listed(fr.pauses)]
     info = [r for _, r in sorted([(f.start_sample, _row(f)) for f in fr.informational] + (pauses or []),
                                  key=lambda z: z[0])]
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError as exc:              # a dangling link or a file where the folder should be
+        raise NotADirectoryError(f"{path.parent} is not a folder") from exc
     fh = _open_write(path, CSV_ENCODING, new=True)                # never over an existing file
     try:
         with fh:

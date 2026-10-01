@@ -65,8 +65,8 @@ def measure(ch: Chapter) -> Activity:
     h = ch.bin_samples
     for s, e in spans:
         sound[s // h:(e + h - 1) // h] = False
-    for a, b in _runs(sound):                       # clicks alone in a gap are not words
-        if b - a < CLICK_BRIDGE_MS and a > 0 and b < len(sound):
+    for a, b in _runs(sound):                       # clicks alone in a gap are not words (at the file's
+        if b - a < CLICK_BRIDGE_MS:                 # very start or end either)
             sound[a:b] = False
 
     runs = _runs(sound)

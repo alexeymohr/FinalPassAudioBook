@@ -1,32 +1,45 @@
-# Never commit audio, models, or local evaluation data.
-*.wav
-*.wave
-*.bwf
-*.w64
-*.rf64
-*.aifc
-*.caf
-*.aac
-*.m4a
-*.m4b
-*.mp4
-*.ogg
-*.opus
+# Never commit audio, models, sessions or local evaluation data (any letter case: a clone on a
+# case-sensitive volume must ignore X.WAV as well).
+*.[wW][aA][vV]
+*.[wW][aA][vV][eE]
+*.[bB][wW][fF]
+*.[wW]64
+*.[rR][fF]64
+*.[aA][iI][fF]
+*.[aA][iI][fF][fF]
+*.[aA][iI][fF][cC]
+*.[cC][aA][fF]
+*.[aA][aA][cC]
+*.[fF][lL][aA][cC]
+*.[mM][pP]3
+*.[mM]4[aA]
+*.[mM]4[bB]
+*.[mM][pP]4
+*.[mM][oO][vV]
+*.[wW][mM][aA]
+*.[oO][gG][gG]
+*.[oO][pP][uU][sS]
+# session and interchange files list client file names
+*.[aA][aA][fF]
+*.[oO][mM][fF]
+*.ptx
+*.rpp
+*.sesx
 *.safetensors
 *.pt
 *.pth
 *.bin
 *.onnx
 *.ckpt
+*.npy
+*.npz
+*.zip
+*.dmg
 # Reports carry client file names: never commit them.
-*.csv
+*.[cC][sS][vV]
 report.json
 issues.txt
 pauses.txt
-*.aif
-*.aiff
-*.flac
-*.mp3
 models/
 resources/
 .venv/

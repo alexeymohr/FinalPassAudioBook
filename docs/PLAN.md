@@ -19,7 +19,7 @@ fpab rules
   time order (`file, start_time, end_time, event, severity, check, measures`); skipped
   files are listed with the reason.
 - `pauses.txt` / `pauses.csv`: the pause map (informational).
-- `report.json`: everything — tunables, every measurement, all scored phrase ends,
+- `report.json`: everything — tunables, every measurement, every scored clip end,
   network attempts (must be 0).
 - `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`). It
   opens with a summary (a label, then one short fact per cell: file, format, duration, problem
@@ -36,8 +36,11 @@ fpab rules
   checked, with the folder's writability, before the analysis starts.
 
 One bad file (missing, empty, unreadable, an unexpected error, an unwritable CSV) is
-skipped with a note; the batch always finishes, and the command exits 1. A file that
-can be read but is not usable narration is a severity-3 file event (§3.10).
+skipped with a note; the batch always finishes, and the command exits 1 (2 when nothing
+could be checked; with `--progress jsonl` 0 once the run completes, problems per file).
+A file that can be read but is not usable narration is a severity-3 file event (§3.10).
+The run report in `--out` is written whole and moved into place, so an interrupted
+write never leaves a cut-off file there.
 
 ## 2. Severity
 
@@ -75,7 +78,8 @@ text rounds, as for hum and plosive).
   breaths sit about 10 dB lower and list far fewer (per chapter about 73 quiet /
   68 / 38 / 9 against 61 / 2 / 1 / 3). A breath that is both is one finding at the
   higher severity. The per-file CSV lists quiet breaths as informational events
-  and sums up the breaths in its summary.
+  and sums up the breaths in its summary. Below 16 kHz sampling the breath check is
+  skipped with a note (its features need the band above 5 kHz).
 
 ### 3.2 Word ends abruptly at a clip end (local model)
 
@@ -140,7 +144,7 @@ A classic dropout (operator): the sound falls to dead silence for a frame or les
 ~33 ms) and comes straight back. A run of at least 10 exact zeros (at 44.1 kHz, scaled; a slow
 zero crossing leaves at most 9) lasting at most 33.4 ms, with at least −45 dBFS in the 5 ms before
 and the 5 ms after. Always severity 3. Skipped for 8-bit audio (its steps round quiet sound to
-exact zero), with a note. Generated narration has no room, so digital silence after a
+exact zero), with a note — so is the chopped-word check, which reads exact zeros too. Generated narration has no room, so digital silence after a
 word is just a pause and is not listed. None on the calibration title's 12 chapters or a second
 title's 5 (a guard); planted in real narration, holes of 10 samples to 15 ms inside words are
 listed 60/60, 30 ms 58/60, and 8-sample holes, 40 ms holes and holes in quiet audio 0/60.
@@ -185,7 +189,11 @@ all consonants by ear; this rule lists none on the whole title (41 files). Plant
 one-sample spikes: 100 % found in pauses at −40 dBFS, about half inside speech at
 −30 dBFS. No real example has been heard yet. The step into and out of a dropout is
 the dropout's own edge and is not listed again; a word that ends in a tick where its
-clip stops is listed once, as the tick.
+clip stops is listed once, as the tick. A tick within 10 ms of the file's start or end
+is judged on the one side there is. At 88.2 kHz and up the test looks only at
+16.5-22.05 kHz and measures sample steps over one 44.1 kHz sample, so it behaves as at
+44.1/48 kHz (a one-sample spike at 192 kHz holds a quarter of the energy and is listed
+from about −34 dBFS).
 
 ### 3.9 Pause map (informational)
 
@@ -195,8 +203,8 @@ The guess reads the length as listed (0.01 s).
 
 ### 3.10 File problems
 
-Severity 3, so an unusable file never reads as clean: invalid (NaN/Inf) samples
-(zeroed for the analysis; the short events that causes — a dropout, ticks — are not
+Severity 3, so an unusable file never reads as clean: invalid samples (NaN, Inf, or
+beyond ±16, i.e. +24 dBFS, in a float file; zeroed for the analysis; the short events that causes — a dropout, ticks — are not
 listed again, and a NaN in one channel of dual mono counts too), audio data that ends
 at least one frame before its header says (RF64/W64 not yet covered), no narration
 found, or a file under 1 s.
@@ -213,7 +221,8 @@ share it) the app asks once for that folder and writes `<name> (2).csv`. A CSV t
 cannot be placed is kept and can be saved later.
 `macos/build_app.sh` assembles it in a staging folder, installs hash-checked
 locked dependencies and hash-pinned build backends, removes the building Mac's
-folder names from what it bundles (and refuses to finish if any remain), signs
+folder names from what it bundles (and refuses to finish if the repo, Python or model
+folders it copied from still appear, or if an untracked file sits in the package), signs
 every Mach-O, asserts exact entitlements and moves the app into place only when all
 checks pass. The app never replaces an existing file; reports it could not place are
 kept until saved, it asks before discarding them, and any left
@@ -222,8 +231,9 @@ when it quits are offered again at the next launch.
 ## 5. Safety and dependencies
 
 - Client audio never leaves the machine: analysis runs under a network guard (a
-  Python audit hook refusing socket creation, DNS, connect, send, bind, child
-  processes and ctypes routes to them, counted in every report) and, in the app,
+  Python audit hook refusing socket creation, DNS, connect, sendto/sendmsg, bind,
+  child processes and the common ctypes routes to them, counted in every run's
+  report.json, terminal output and the app's status line) and, in the app,
   the OS sandbox without network access. The guard sees what goes through Python;
   the sandbox is the hard boundary (the command line can run under
   `sandbox-exec` with the network denied; see the README).

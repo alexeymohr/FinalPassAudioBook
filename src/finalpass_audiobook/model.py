@@ -98,7 +98,10 @@ def download() -> Path:
 
 
 def installed() -> bool:
-    return weights_path().is_file()
+    try:
+        return weights_path().is_file()
+    except OSError:                             # a model folder that cannot be looked at: not usable
+        return False
 
 
 def load():
@@ -110,10 +113,11 @@ def load():
         raise ModelError("model weights not installed — run `fpab setup-model`")
     path = weights_path()
     try:
-        size = path.stat().st_size                  # never read an unexpected file into memory
-        if size != WEIGHTS_BYTES:
-            raise ModelError(f"{path}: {size} bytes, expected {WEIGHTS_BYTES}")
-        raw = path.read_bytes()
+        with open(path, "rb") as fh:                # one open: the size checked is the file read
+            size = os.fstat(fh.fileno()).st_size
+            if size != WEIGHTS_BYTES:               # never read an unexpected file into memory
+                raise ModelError(f"{path}: {size} bytes, expected {WEIGHTS_BYTES}")
+            raw = fh.read(WEIGHTS_BYTES + 1)
     except OSError as exc:
         raise ModelError(f"{path}: cannot be read ({exc})") from exc
     if len(raw) != WEIGHTS_BYTES:
@@ -123,7 +127,7 @@ def load():
         raise ModelError(f"{path}: SHA-256 {digest} does not match the audited {WEIGHTS_SHA256}")
     try:
         return build_from_bytes(raw, VENDOR / "config.json")
-    except (WeightsError, ValueError, KeyError) as exc:
+    except (WeightsError, ValueError, KeyError, OSError) as exc:
         raise ModelError(f"{path}: {exc}") from exc
 
 

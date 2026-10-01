@@ -33,7 +33,7 @@ never audio. Excerpts written for the operator's own listening stay on disk and
 are never read back.
 
 A local model may process client audio only when it runs fully offline under a
-network guard and emits numbers only (the truncation model below).
+network guard and emits numbers only (the chopped-word model, docs/PLAN.md §3.2).
 
 ## Public repo: no client identifiers
 

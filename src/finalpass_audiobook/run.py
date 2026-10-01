@@ -26,7 +26,7 @@ from .checks.pauses import pause_map
 from .checks.plosives import PlosiveTunables, plosive_findings
 from .checks.truncation import TruncationTunables, clip_ends, score_phrase_ends, truncation_findings
 from .findings import FileResult, Finding, RunReport
-from .model import ModelError, load
+from .model import ModelError, load, weights_path
 from .netguard import NetworkGuard
 from .rules import RULE_SETS, RuleSet
 
@@ -56,6 +56,7 @@ class RunOptions:
 
 
 MIN_DURATION_S = 1.0                     # shorter than this cannot be a chapter
+MIN_BREATH_RATE = 16000
 _DATA_SIZE = re.compile(r"^data\s*:\s*(\d+)\s*\(should be (\d+)\)", re.MULTILINE)
 _BLOCK_ALIGN = re.compile(r"Block Align\s*:\s*(\d+)")
 SHORT_EVENTS = ("dropout", "ticks", "clicks", "plosive", "truncation")   # what a zeroed NaN run can cause
@@ -81,17 +82,19 @@ def _file_findings(ch: Chapter, header_log: str) -> list[Finding]:
     out, n = [], len(ch.x)
     if ch.invalid_samples.size:
         a, b = int(ch.invalid_samples[0]), int(ch.invalid_samples[-1])
-        out.append(_file_event(ch, a, b, f"file contains {ch.invalid_samples.size} invalid (NaN/Inf) samples — "
-                                         "corrupt audio", invalid_samples=int(ch.invalid_samples.size)))
+        out.append(_file_event(ch, a, b + 1, f"file contains {ch.invalid_samples.size} invalid (NaN, Inf or "
+                                             "out-of-range) samples — corrupt audio",
+                               invalid_samples=int(ch.invalid_samples.size)))
     m = _DATA_SIZE.search(header_log)
     frame = int(b.group(1)) if (b := _BLOCK_ALIGN.search(header_log)) else 1
-    # short by at least one whole frame (less loses no audio); 0 / 0xFFFFFFFF: a header never finished
-    if m and int(m.group(2)) + max(1, frame) <= int(m.group(1)) < 0x7FFFFFFF:
+    # short by at least one whole frame (less loses no audio); 0xFFFFFFFF / 0x7FFFFFFF: a header that
+    # was never finished (a 0 size is never "more than the data")
+    if m and int(m.group(2)) + max(1, frame) <= int(m.group(1)) and int(m.group(1)) not in (0xFFFFFFFF, 0x7FFFFFFF):
         out.append(_file_event(ch, n, n, "file is cut short: its audio ends before its header says it should",
                                data_bytes=int(m.group(2)), header_bytes=int(m.group(1))))
     if ch.duration_s < MIN_DURATION_S:
-        out.append(_file_event(ch, 0, n, f"file is only {ch.duration_s * 1000:.0f} ms long",
-                               duration_ms=round(ch.duration_s * 1000)))
+        out.append(_file_event(ch, 0, n, f"file is only {int(ch.duration_s * 1000)} ms long",
+                               duration_ms=int(ch.duration_s * 1000)))
     elif not np.isfinite(ch.narration_dbfs):
         out.append(_file_event(ch, 0, n, "no narration found in the file"))
     return out
@@ -119,6 +122,9 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     say("breaths")
     rise = rise_db(ch.x, ch.sr, opts.clicks)
     breath_list, quiet_breaths, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
+    if ch.sr < MIN_BREATH_RATE:              # breath features need the band above 5 kHz: room tone reads as breath
+        breath_list, quiet_breaths = [], []
+        notes.append(f"breath check skipped: {ch.sr / 1000:g} kHz audio (needs {MIN_BREATH_RATE / 1000:g} kHz or more)")
     findings += breath_list
     say("pauses")
     act = measure(ch)
@@ -134,8 +140,9 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     findings += noise_list
     say("dropouts")
     dropouts: list[Finding] = []
-    if 0 < ch.audio.bit_depth <= 8:              # 8-bit steps round quiet audio to exact zero: no dropout test
-        notes.append("dropout check skipped: 8-bit audio")
+    eight_bit = 0 < ch.audio.bit_depth <= 8     # 8-bit steps round quiet audio to exact zero: no dropout or
+    if eight_bit:                               # clip-end test (both read exact zeros)
+        notes.append("dropout and chopped-word checks skipped: 8-bit audio")
     else:
         dropouts = dropout_findings(ch, opts.dropouts)
     findings += dropouts
@@ -153,7 +160,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     ticks = [k for k in tick_findings(ch, opts.ticks) if all(abs(k.start_sample - e) > near for e in edges)]
     findings += [c for c in clicks if all(abs(c.start_sample - k.start_sample) > near for k in ticks)] + ticks
     records: list[dict] = []
-    if model is not None:
+    if model is not None and not eight_bit:
         say("chopped words")
         records = score_phrase_ends(ch, clip_ends(ch, opts.truncation_tunables), model, opts.truncation_tunables)
         # a word that ends in a digital tick is listed once, as the tick (the worse of the two)
@@ -181,10 +188,10 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
 def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
         stage: Callable[[int, str], None] | None = None,
         file_done: Callable[[int, FileResult], None] | None = None,
-        model_loaded: Callable[[bool], None] | None = None) -> RunReport:
+        model_loaded: Callable[[bool, str], None] | None = None) -> RunReport:
     """Check every file. `progress(i, n, path)` before each file, `stage(i, name)` as each check
     starts (i = -1 while the model loads), `file_done(i, result)` as each file finishes, and
-    `model_loaded(ok)` once, before the first file, when the chopped-word check is on."""
+    `model_loaded(ok, why)` once, before the first file, when the chopped-word check is on."""
     started = datetime.now(timezone.utc).replace(microsecond=0)
     run_id = started.strftime("%Y-%m-%dT%H-%M-%SZ") + "-" + secrets.token_hex(3)
     notes: list[str] = []
@@ -194,12 +201,14 @@ def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
         if opts.truncation:
             if stage:
                 stage(-1, "loading model")
+            why = ""
             try:
                 model = load()
             except ModelError as exc:
                 notes.append(f"truncation check skipped: {exc}")
+                why = str(exc).removeprefix(f"{weights_path()}: ")      # the reason, without the long path
             if model_loaded:
-                model_loaded(model is not None)
+                model_loaded(model is not None, why)
         for i, path in enumerate(paths):
             if progress:
                 progress(i, len(paths), path)

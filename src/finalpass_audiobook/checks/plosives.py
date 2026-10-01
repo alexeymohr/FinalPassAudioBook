@@ -85,7 +85,8 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
     blocks = lambda ms: max(1, int(round(ms / 1000 / block_s)))  # noqa: E731
     w_from, w_to = blocks(t.word_from_ms), blocks(t.word_to_ms)
     near = blocks(t.one_per_ms)
-    peaks = np.flatnonzero((low >= t.min_dbfs) & (low == maximum_filter1d(low, 2 * near + 1, mode="nearest")))
+    # listed from the level that shows as min_dbfs (graded on the whole dB shown)
+    peaks = np.flatnonzero((low >= t.min_dbfs - 0.5) & (low == maximum_filter1d(low, 2 * near + 1, mode="nearest")))
     after = int(t.mouth_click_after_ms / 1000 * ch.sr)
     out: list[Finding] = []
     for j in peaks:
@@ -116,6 +117,8 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
         if any(s <= b + after and e >= a for a, b in mouth_click_spans):
             continue                  # part of a mouth-click inhale: the breath's entry covers it
         level = round(float(low[j]))          # graded on the whole-dB value the text shows
+        if level < t.min_dbfs:
+            continue
         out.append(Finding(
             file=ch.name, check="plosive", start_sample=s, end_sample=e, start_time=ch.clock(s), end_time=ch.clock(e),
             severity=ladder(level, (t.min_dbfs, t.sev2_dbfs, t.sev3_dbfs)),

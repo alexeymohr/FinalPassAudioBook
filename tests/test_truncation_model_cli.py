@@ -143,7 +143,8 @@ def test_the_csv_says_the_check_was_off_when_the_model_did_not_load(tmp_path: Pa
     r = CliRunner().invoke(main, ["check", "--csv-per-file", str(wav)])
     assert r.exit_code == 0, r.output
     summary, _, _ = read_report(wav.with_suffix(".csv"))
-    assert summary["chopped-word check"] == "off (model could not be loaded; see notes)"
+    line = summary["chopped-word check"]                       # the reason is in the CSV itself
+    assert line.startswith("off (model could not be loaded: ") and "SHA-256" in line and str(tmp_path) not in line
 
 
 def test_the_chopped_word_check_runs_end_to_end_at_a_clip_end(tmp_path: Path) -> None:
@@ -192,3 +193,43 @@ def test_only_clip_ends_into_digital_black_are_scored() -> None:
     end = int(0.5 * SR) + len(phrase(3))
     assert clip_ends(chapter(x)) == [end]
     assert clip_ends(chapter(np.concatenate([np.zeros(SR), phrase(3), room(1.0)]))) == []   # black at the file start
+
+
+def test_the_csv_says_on_when_the_model_ran_and_why_not_otherwise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from report_csv import read_report
+    import finalpass_audiobook.run as run_mod
+    wav = tmp_path / "ch.wav"
+    sf.write(str(wav), np.concatenate([room(1.0), phrase(3), room(2.5)]), SR, subtype="PCM_24")
+    monkeypatch.setattr(run_mod, "load", lambda: _FakeModel([0.1] * 50))
+    monkeypatch.setattr("finalpass_audiobook.model.installed", lambda: True)
+    assert CliRunner().invoke(main, ["check", "--csv-per-file", str(wav)]).exit_code == 0
+    assert read_report(wav.with_suffix(".csv"))[0]["chopped-word check"] == "on"
+    monkeypatch.undo()
+    monkeypatch.setenv("FPAB_MODEL_DIR", str(tmp_path / "empty"))
+    assert CliRunner().invoke(main, ["check", "--csv-per-file", str(wav)]).exit_code == 0
+    assert read_report(tmp_path / "ch (2).csv")[0]["chopped-word check"] == "off (model not installed)"
+
+
+def test_the_size_is_checked_before_the_weights_are_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _weights(tmp_path, monkeypatch, b"z" * 65)
+    monkeypatch.setattr(model_mod, "WEIGHTS_BYTES", 64)
+    with pytest.raises(model_mod.ModelError, match="65 bytes, expected 64"):
+        model_mod.load()
+
+
+def test_an_unreadable_model_folder_skips_the_check_without_a_crash(tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything")
+    d = tmp_path / "models"
+    d.mkdir()
+    monkeypatch.setenv("FPAB_MODEL_DIR", str(d))
+    wav = tmp_path / "ch.wav"
+    sf.write(str(wav), np.concatenate([room(1.0), phrase(3), room(2.5)]), SR, subtype="PCM_24")
+    d.chmod(0)
+    try:
+        r = CliRunner().invoke(main, ["check", "--out", str(tmp_path / "o"), str(wav)])
+    finally:
+        d.chmod(0o755)
+    assert r.exit_code == 0, r.output

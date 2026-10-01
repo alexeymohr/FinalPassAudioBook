@@ -56,7 +56,7 @@ def test_a_nan_in_one_channel_of_dual_mono_is_corruption_not_a_difference(tmp_pa
     st[SR + 1000, 1] = np.nan
     fr = _analyse(tmp_path, st, subtype="FLOAT")
     assert fr.sample_rate == SR
-    assert _file_events(fr) == [(3, "file contains 1 invalid (NaN/Inf) samples — corrupt audio")]
+    assert _file_events(fr) == [(3, "file contains 1 invalid (NaN, Inf or out-of-range) samples — corrupt audio")]
 
 
 def test_a_run_of_nan_samples_is_listed_once_not_again_as_a_dropout_or_ticks(tmp_path: Path) -> None:
@@ -68,10 +68,14 @@ def test_a_run_of_nan_samples_is_listed_once_not_again_as_a_dropout_or_ticks(tmp
     assert [f.check for f in near] == ["file"]
 
 
-def test_eight_bit_audio_skips_the_dropout_check_with_a_note(tmp_path: Path) -> None:
-    fr = _analyse(tmp_path, _narration(), subtype="PCM_U8")
-    assert all(f.check != "dropout" for f in fr.findings)
-    assert "dropout check skipped: 8-bit audio" in fr.notes
+def test_eight_bit_audio_skips_the_exact_zero_checks_with_a_note(tmp_path: Path) -> None:
+    """8-bit steps round quiet audio to exact zero: no dropout and no clip-end (chopped-word) test."""
+    from test_truncation_model_cli import _FakeModel
+    p = tmp_path / "c.wav"
+    sf.write(str(p), _narration(), SR, subtype="PCM_U8")
+    fr = analyze_file(p, RunOptions(), model=_FakeModel([0.999] * 50))
+    assert all(f.check not in ("dropout", "truncation") for f in fr.findings) and fr.counts["phrase_ends_scored"] == 0
+    assert "dropout and chopped-word checks skipped: 8-bit audio" in fr.notes
 
 
 def test_one_corrupt_sample_does_not_hide_a_hum_or_a_noisy_section(tmp_path: Path) -> None:

@@ -548,6 +548,8 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
     if not heard_in_pauses_only:
         rise, drop = _abrupt_edges(y, fs, t, f0, start_s, end_s)
         cut_start, cut_end = rise >= t.edge_step_db, drop >= t.edge_step_db
+        if cut_start:
+            rising = None          # an abrupt start only half fills the first windows: not a build-up
         for f, lv in sorted(heads, key=lambda z: -z[1]):
             if cut_start and cut_end:
                 break
@@ -686,7 +688,7 @@ def hum_findings(ch: Chapter, t: HumTunables = HumTunables()) -> list[Finding]:
         # inside it but not those around it is confirmed in the gaps it fills.
         near = [p for p in pauses if p[1] > start_s - t.confirm_margin_s and p[0] < end_s + t.confirm_margin_s]
         heard = (not (near or level < pause_limit)) or _heard_in_pauses(y, fs, t, f0, start_s, end_s, pauses)
-        if not heard and not any(start_s < (p[0] + p[1]) / 2 < end_s for p in pauses):   # none inside it
+        if not heard:              # a pause inside without the line (an edit patch, black) does not veto this
             gaps = _filled_gaps(ch, t, start_s, end_s, level)
             heard = bool(gaps) and _heard_in_pauses(y, fs, t, f0, start_s, end_s, gaps, at_level=level)
         if t.confirm_in_pauses and not heard:

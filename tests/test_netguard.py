@@ -38,6 +38,10 @@ ROUTES = {
     "ctypes execvP": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "execvP"),
     "ctypes async lookup": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "getaddrinfo_async_start"),
     "ctypes DNS service": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "DNSServiceGetAddrInfo"),
+    "ctypes res_query": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "res_query"),
+    "ctypes connectx": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "connectx"),
+    "ctypes Network.framework": lambda: _ctypes.dlsym(_ctypes.dlopen(None), "nw_connection_create"),
+    "ctypes libresolv": lambda: ctypes.CDLL("/usr/lib/libresolv.dylib"),
 }
 
 

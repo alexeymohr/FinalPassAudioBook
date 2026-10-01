@@ -223,3 +223,129 @@ def test_a_csv_that_fails_part_way_is_not_left_behind(tmp_path: Path, monkeypatc
     with pytest.raises(FileExistsError):                          # never over an existing file
         output.file_csv(fr, tmp_path / "c.csv")
     assert (tmp_path / "c.csv").read_text() == "mine\n"
+
+
+def test_running_out_of_names_is_a_note_and_exit_1(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.output as output
+
+    def always_taken(*a, **k):        # noqa: ANN002, ANN003
+        raise FileExistsError("taken")
+    monkeypatch.setattr(output, "file_csv", always_taken)
+    a = _wav(tmp_path / "a.wav")
+    r = CliRunner().invoke(main, ["check", "--no-truncation", "--csv-per-file", str(a)])
+    assert r.exit_code == 1 and "every name tried was taken" in r.output
+
+
+def test_a_csv_folder_that_is_a_broken_link_is_a_note_and_exit_1(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "a.wav")
+    (tmp_path / "csvs").symlink_to(tmp_path / "unmounted")
+    r = _check("--csv-dir", str(tmp_path / "csvs"), str(a))
+    assert r.exit_code == 1 and "is not a folder" in r.output
+
+
+def test_a_csv_that_cannot_be_written_makes_text_mode_exit_1(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "in" / "a.wav")
+    out = tmp_path / "ro"
+    out.mkdir()
+    out.chmod(0o555)
+    try:
+        r = _check("--csv-dir", str(out), str(a))
+    finally:
+        out.chmod(0o755)
+    assert r.exit_code == 1 and "could not write the CSV" in r.output
+
+
+@pytest.mark.parametrize("name", ["issues.txt", "issues.csv", "pauses.txt", "pauses.csv", "report.json"])
+def test_any_run_report_name_held_by_someone_else_stops_the_run(tmp_path: Path, name: str) -> None:
+    a = _wav(tmp_path / "a.wav")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / name).write_text('{"a": 1}\n' if name.endswith("json") else "mine\n")
+    r = _check("--out", str(out), str(a))
+    assert r.exit_code == 2 and (out / name).read_text() in ('{"a": 1}\n', "mine\n")
+
+
+def test_a_run_report_file_that_appears_during_the_run_is_kept(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.run as run_mod
+    a = _wav(tmp_path / "a.wav")
+    out = tmp_path / "out"
+    real = run_mod.analyze_file
+
+    def analyze(path, *args, **kw):        # noqa: ANN001, ANN002, ANN003, ANN202
+        out.mkdir(exist_ok=True)
+        (out / "issues.txt").write_text("mine, saved mid-run\n")
+        return real(path, *args, **kw)
+    monkeypatch.setattr(run_mod, "analyze_file", analyze)
+    r = _check("--out", str(out), str(a))
+    assert r.exit_code == 1 and (out / "issues.txt").read_text() == "mine, saved mid-run\n"
+
+
+def test_an_interrupted_run_report_does_not_lock_the_folder(tmp_path: Path, monkeypatch) -> None:
+    import finalpass_audiobook.output as output
+    a = _wav(tmp_path / "a.wav")
+    out = tmp_path / "out"
+    assert _check("--out", str(out), str(a)).exit_code == 0
+    real = output.pauses_text
+
+    def disk_full(*args, **kw):        # noqa: ANN002, ANN003, ANN202
+        raise OSError("No space left on device")
+    monkeypatch.setattr(output, "pauses_text", disk_full)
+    assert _check("--out", str(out), str(a)).exit_code == 1
+    assert not list(out.glob(".*part"))                          # no half-written file left behind
+    monkeypatch.setattr(output, "pauses_text", real)
+    assert _check("--out", str(out), str(a)).exit_code == 0       # still ours: the next run goes ahead
+
+
+def test_the_issue_list_counts_every_finding_whatever_min_sev_hides(tmp_path: Path) -> None:
+    from finalpass_audiobook.findings import FileResult, Finding, RunReport
+    from finalpass_audiobook.output import issues_text
+    f = Finding(file="c.wav", check="plosive", start_sample=0, end_sample=1, start_time="0:00:00.000",
+                end_time="0:00:00.000", severity=1, problem="pop")
+    fr = FileResult(file="c.wav", path="c.wav", sample_rate=SR, duration_seconds=1.0, narration_dbfs=None,
+                    noise_floor_dbfs=None, findings=[f], pauses=[])
+    rep = RunReport(version="t", finalpass_version="t", run_id="r", run_started_at="t", rules="standard",
+                    tunables={}, network_attempts=0, files=[fr])
+    text = issues_text(rep, min_sev=3)
+    assert "0 × sev 3, 0 × sev 2, 1 × sev 1" in text and "pop" not in text
+
+
+def test_a_shared_csv_folder_never_takes_another_wavs_own_name(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "bookA" / "ch01.wav")
+    _wav(tmp_path / "bookB" / "ch01.wav")
+    assert _check("--csv-dir", str(tmp_path / "bookB"), str(a)).exit_code == 0
+    assert not (tmp_path / "bookB" / "ch01.csv").exists()                 # bookB's ch01.wav's own name
+    assert report_source(tmp_path / "bookB" / "ch01 (2).csv")[1] == str((tmp_path / "bookA").resolve())
+
+
+def test_a_name_too_long_to_number_is_a_note_and_the_batch_goes_on(tmp_path: Path) -> None:
+    long = _wav(tmp_path / ("x" * 250 + ".wav"))
+    other = _wav(tmp_path / "b.wav")
+    assert _check("--csv-per-file", str(long)).exit_code == 0             # the plain name still fits
+    r = _check("--csv-per-file", "--progress", "jsonl", str(long), str(other))
+    done = _done(r)
+    assert r.exit_code == 0 and done[0]["csv"] is None and any("too long" in n for n in done[0]["notes"])
+    assert done[1]["csv"]
+
+
+def test_names_are_planned_past_files_links_and_this_run(tmp_path: Path) -> None:
+    from finalpass_audiobook.cli import _csv_targets
+    a, b = _wav(tmp_path / "one" / "ch01.wav"), _wav(tmp_path / "two" / "ch01.wav")
+    out = tmp_path / "csvs"
+    out.mkdir()
+    (out / "ch01.csv").write_text("x")
+    (out / "ch01 (2).csv").symlink_to(tmp_path / "nowhere")
+    assert [p.name for p in _csv_targets([a, b], out)] == ["ch01 (3).csv", "ch01 (4).csv"]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads everything")
+def test_an_unreadable_folder_is_a_skipped_entry_and_the_rest_runs(tmp_path: Path) -> None:
+    a = _wav(tmp_path / "a.wav")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        r = _check("--csv-dir", str(tmp_path / "c"), "--progress", "jsonl", str(locked), str(a))
+    finally:
+        locked.chmod(0o755)
+    done = _done(r)
+    assert r.exit_code == 0 and len(done) == 2 and done[1]["csv"] and any("folder" in n for n in done[0]["notes"])

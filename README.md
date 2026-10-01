@@ -7,9 +7,9 @@ triage tool, not a gate: nothing it reports fails a file.
 
 Everything runs on your machine. No audio is uploaded, transcribed or sent
 anywhere. The macOS app runs in the OS sandbox with no network access at all.
-The command line guards every analysis run from inside Python: it refuses any
-network or process attempt Python can see and records the count, which must be
-0. For an OS-level block there too, run it under
+The command line guards every analysis run from inside Python: it refuses the
+network and process routes it knows of and records the count, which must be 0
+(a Python-level guard, not a sandbox). For an OS-level block there too, run it under
 `sandbox-exec -p '(version 1)(allow default)(deny network*)' .venv/bin/fpab check …`.
 
 ## What it checks
@@ -23,9 +23,9 @@ network or process attempt Python can see and records the count, which must be
 | Digital tick (a spike above 16.5 kHz, a few samples long, standing alone) | 3 | a guard: none on a whole title; 40 of 40 planted spikes in pauses found |
 | Dropout (dead digital silence for a frame or less, about 33 ms, inside audible sound) | 3 | a guard: none in 17 chapters of two titles; planted holes of 10 samples to 15 ms inside words all found |
 | Word ends abruptly where a generated clip ends (local model) | 1 | four titles: found all 9 real chops on one; elsewhere only hard endings, nothing missing |
-| Hum (a steady tone, also found in the pauses when speech covers it) | 1; 2 when strong (−55 dBFS or more); 3 when strong and it starts or stops abruptly | 12 of 12 listed hums confirmed by ear on one title |
+| Hum (a steady tone, also found in the pauses when speech covers it) | 1; 2 when strong (shown as −55 dBFS or more); 3 when strong and it starts or stops abruptly | 12 of 12 listed hums confirmed by ear on one title |
 | Noisy section (noise floor within 41 dB of the narration for about 5.5 s) | 3 / 2 / 1 as the floor comes within 25 / 32 / 41 dB of the speech | 6 of one title's 7 QC-noted noisy blocks |
-| File problem (corrupt samples, audio cut short of its header, no narration found, under 1 s) | 3 | checked on synthetic files |
+| File problem (corrupt or out-of-range samples, audio cut short of its header, no narration found, under 1 s) | 3 | checked on synthetic files |
 | Pause map with a guess at each pause's kind | informational | two generic rule sets (`fpab rules`) |
 
 Breath and noise levels are judged against the narration, so they follow the
@@ -54,13 +54,15 @@ recursively); each file must be mono, or have identical channels. It writes
 `--out` (default `./fpab-report`, or, with `--csv-per-file`, only when `--out`
 is given); it never replaces files there that it did not write. `--csv-per-file`
 writes one CSV per WAV beside it (or into `--csv-dir`): a summary, the problem
-events, then the informational events; `--with-pauses` adds the pause map. An
-existing file is never replaced, not even an earlier report: a new one gets
-`<name> (2).csv`, `(3)`, …. `fpab check --help` lists every option. Without the
-model installed, the chopped-word check is skipped with a note. It exits 1 when a
-file was skipped or a report could not be written (`--progress jsonl`, which the
-app uses, reports that per file instead). `fpab setup-model` is the only command
-that uses the network.
+events, then the informational events; `--with-pauses` adds the pause map. A
+per-file CSV never replaces an existing file, not even an earlier report: a new one
+gets `<name> (2).csv`, `(3)`, …. (The run report in `--out` is the one exception: the
+next run replaces its own files there.) `fpab check --help` lists every option.
+Without the model installed, the chopped-word check is skipped with a note. It exits
+1 when a file was skipped or a report could not be written, and 2 when nothing could
+be checked (no audio found, an unusable `--out`); with `--progress jsonl`, which the
+app uses, it exits 0 once the run completes and reports problems per file.
+`fpab setup-model` is the only command that uses the network.
 
 A drag-and-drop macOS app (sandboxed, no network) that writes the same per-file
 CSVs builds from [macos/](macos/README.md).
