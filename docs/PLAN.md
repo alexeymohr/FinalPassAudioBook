@@ -80,6 +80,18 @@ text rounds, as for hum and plosive).
   higher severity. The per-file CSV lists quiet breaths as informational events
   and sums up the breaths in its summary. Below 16 kHz sampling the breath check is
   skipped with a note (its features need the band above 5 kHz).
+- **A sound as loud as speech is not a breath** (FinalPass): when a breath's loudest
+  quarter (75th-percentile frame) comes within 15 dB of the narration it is a speech
+  sound, typically an "s", "sh" or "ch" left alone at the end of a word before a
+  pause. Some voices' sibilants peak near 3 kHz instead of above 5 kHz, and a stop
+  closure gives them their own gap from the word, so nothing else kept them out: a test
+  book in a voice that makes no breaths listed 14 "breaths", 12 of them very loud, and
+  every one the operator auditioned was a sibilant. Evidence: the operator's labelled
+  breaths (523 on three chapters, mouth-click inhales and breaths straight after a
+  consonant included) and the 16 QC-cut breaths in the 12 study chapters never come
+  closer than 16.8 dB; the test voice's 12 loud ones all come within 12.8 dB. The rule
+  also removes 3 of 1,717 unlabelled detections on 15 chapters of the calibration
+  title and 12 of 331 on five chapters of the second title.
 
 ### 3.2 Word ends abruptly at a clip end (local model)
 

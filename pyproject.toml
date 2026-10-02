@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finalpass-audiobook"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local, offline QC for AI-narrated audiobook chapters."
 readme = "README.md"
 license = "MIT AND Apache-2.0"   # fpab is MIT; the vendored model code keeps its Apache-2.0
@@ -44,7 +44,7 @@ dev = ["pytest>=8"]
 exclude-newer = "2026-09-21T00:00:00Z"
 
 [tool.uv.sources]
-finalpass = { git = "https://github.com/alexeymohr/FinalPass", rev = "4b7d9b5f33c24df69beef94a3131aff099ff7b3e" }
+finalpass = { git = "https://github.com/alexeymohr/FinalPass", rev = "e2725220a35060b64d4f66214b91ef7c6fda48bd" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/finalpass_audiobook"]

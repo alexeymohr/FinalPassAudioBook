@@ -95,6 +95,7 @@ cp "$BIN" "$APP/Contents/MacOS/FPAB"
 strip -S -x "$APP/Contents/MacOS/FPAB"      # debug records name the source folder; signed with the app below
 cp "$HERE/Resources/Info.plist" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"   # newer build, newer number
 
 say "App icon (Icon Composer file -> Assets.car, plus an .icns for macOS before 26)"
 xcrun actool --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 14.0 \

@@ -17,7 +17,7 @@ network and process routes it knows of and records the count, which must be 0
 | check | severity | status |
 |---|---|---|
 | Mouth-click inhale (a breath that opens with a click, after a pause since the word) | 3 when the click is loud (narration −20 dB or more), else 2 | calibrated on one title's operator labels; 32 of 32 held-out listings confirmed by ear |
-| Breath (every breath, by its loudness against the narration) | quiet ones informational; 1 / 2 / 3 from −31.6 / −26.4 / −22.5 dB | a fixed scale set on one title's breaths (its 35th / 75th / 95th percentiles) |
+| Breath (every breath, by its loudness against the narration; a sound as loud as speech, such as an "s", "sh" or "ch" left alone before a pause, is not a breath) | quiet ones informational; 1 / 2 / 3 from −31.6 / −26.4 / −22.5 dB | a fixed scale set on one title's breaths (its 35th / 75th / 95th percentiles); no labelled breath comes within 15 dB of the narration, every sibilant heard on a breathless test voice does |
 | Plosive pop (a low thump below 100 Hz on its own, just before a word) | 1 / 2 / 3 from −42 / −34 / −26 dBFS | 10 of one title's 12 QC-noted pops; held out, 29 of 32 listings were plosives by ear |
 | Click in the silence (between words, and in the room tone before the first word and after the last; 100 ms clear of words and breaths) | 3 | on one title's 12 chapters, the 2 ticks confirmed by ear and nothing else; a second title must confirm it |
 | Digital tick (a spike above 16.5 kHz, a few samples long, standing alone) | 3 | a guard: none on a whole title; 40 of 40 planted spikes in pauses found |
