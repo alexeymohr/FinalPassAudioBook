@@ -99,6 +99,7 @@ def _windows(n: int) -> list[np.ndarray]:
 
 
 @needs_weights
+@pytest.mark.real_models
 def test_mel_and_scores_match_the_torch_reference() -> None:
     ref = model_mod.load_reference()
     port = model_mod.load()
@@ -195,6 +196,7 @@ def _speechy(sr: int, seconds: float, seed: int, dc: float = 0.0, rumble: float 
 
 
 @needs_weights
+@pytest.mark.real_models
 @pytest.mark.parametrize("sr, seconds, dc, rumble", [
     (44100, 2.0, 0.0, 0.0), (44100, 7.3, 0.0, 0.0), (44100, 180697 / 44100, 0.0, 0.0),
     (11025, 5.0, 0.0, 0.0), (22050, 5.0, 0.0, 0.0), (44100, 5.0, 0.4, 0.0), (44100, 5.0, 0.0, 0.3)])
@@ -209,6 +211,7 @@ def test_scores_match_the_reference_on_odd_lengths_rates_and_low_end(sr, seconds
 
 
 @needs_weights
+@pytest.mark.real_models
 def test_decision_window_frames_match_the_reference() -> None:
     ref, port = model_mod.load_reference(), model_mod.load()
     for ms in (1, 5, 9.99, 10, 10.01, 20, 25, 30, 33.3, 100, 5000):

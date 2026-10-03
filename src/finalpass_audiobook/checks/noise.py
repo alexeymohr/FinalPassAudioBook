@@ -63,20 +63,23 @@ class NoiseTunables:
     min_window_s: float = 2.5
     min_stretch_s: float = 3.0
     merge_gap_s: float = 1.0
+    leak_bins: float = 4.0             # a listed hum's tone spreads this many FFT bins either side (main lobe and
+    leak_from_dbfs: float = -55.0      # first sidelobes); a tone louder than this reaches further, twice as far
+    leak_db_per_doubling: float = 18.0 # for each this many dB (the Hann sidelobes' roll-off)
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
 def floor_track(x: np.ndarray, sr: int, t: NoiseTunables = NoiseTunables(),
-                exclude: list[tuple[list[float], float, float]] | None = None) -> tuple[np.ndarray, float]:
+                exclude: list[tuple[list[float], float, float, float]] | None = None) -> tuple[np.ndarray, float]:
     """Broadband noise floor (dBFS) every hop (HOP_S, a whole number of samples), and that hop in
     seconds — the exact one, so times stay right at any rate (at 22.05 kHz 10 ms is 220.5 samples).
 
     Each frame's DC is removed first (an offset would leak into the lowest band). A band's floor is
     its bias-corrected minimum, but never above its running mean: a steady tone's minimum already
-    is its mean, and correcting it again would inflate it. `exclude` = (frequencies, start s, end s):
-    bands holding a listed hum are left out while it sounds (the hum check reports it)."""
+    is its mean, and correcting it again would inflate it. `exclude` = (frequencies, start s, end s,
+    level dBFS): bands holding a listed hum are left out while it sounds (the hum check reports it)."""
     n, hop = int(round(FRAME_S * sr)), int(round(HOP_S * sr))
     hop_s = hop / sr
     if len(x) < n:
@@ -102,9 +105,11 @@ def floor_track(x: np.ndarray, sr: int, t: NoiseTunables = NoiseTunables(),
     floor = np.minimum(minima * bias, uniform_filter1d(smooth, size, axis=0, mode="nearest"))
     kept_edges = [e for e, i in zip(edges, [np.flatnonzero((f >= lo) & (f < hi)) for lo, hi in edges]) if i.size]
     # a tone spreads over its main lobe and first sidelobes (about four FFT bins either side in these
-    # 20 ms frames), and the few-bin low bands' bias correction lifts that leakage by up to 10 dB
-    leak = 4.0 * sr / nfft
-    for freqs, a_s, b_s in exclude or []:
+    # 20 ms frames), and the few-bin low bands' bias correction lifts that leakage by up to 10 dB; a loud
+    # tone's further sidelobes still stand over a quiet floor (a -40 dBFS tone lifted bands 110 Hz away
+    # from -100 to -65 dBFS), so its reach grows with its level
+    for freqs, a_s, b_s, level in exclude or []:
+        leak = t.leak_bins * 2 ** (max(0.0, level - t.leak_from_dbfs) / t.leak_db_per_doubling) * sr / nfft
         cols = [j for j, (lo, hi) in enumerate(kept_edges) if any(lo < fr + leak and fr - leak < hi for fr in freqs)]
         r0, r1 = max(0, int(a_s / hop_s)), min(len(floor), int(b_s / hop_s) + 1)
         if cols and r1 > r0:
@@ -125,7 +130,8 @@ def _stretches(above: np.ndarray, hop_s: float, t: NoiseTunables) -> list[tuple[
 
 
 def noise_findings(ch: Chapter, t: NoiseTunables = NoiseTunables(),
-                   exclude: list[tuple[list[float], float, float]] | None = None) -> tuple[list[Finding], float | None]:
+                   exclude: list[tuple[list[float], float, float, float]] | None = None
+                   ) -> tuple[list[Finding], float | None]:
     track, hop_s = floor_track(ch.x, ch.sr, t, exclude)
     if track.size == 0:
         return [], None
@@ -147,7 +153,7 @@ def noise_findings(ch: Chapter, t: NoiseTunables = NoiseTunables(),
         level = round(float(np.median(seg)), 1)
         speech = ch.local_speech_dbfs(s, e) if np.isfinite(narration) else float("nan")
         if np.isfinite(speech):
-            gap = round(speech - level, 1)
+            gap = round(speech - level, 1) + 0.0          # + 0.0: never "-0.0 dB under speech"
             severity = 3 if gap < t.sev3_under_gap_db else 2 if gap < t.sev2_under_gap_db else 1
             text = f"noisy section: floor {level:.1f} dBFS, {gap:.1f} dB under speech"
         else:                           # no narration to compare with: the dBFS equivalents of the ladder

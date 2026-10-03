@@ -26,7 +26,7 @@ Composer app icon) and a uv-managed Python 3.12 (the script refuses any other).
 ```
 uv sync --managed-python        # the repo's environment
 uv run fpab setup-model         # both models' weights, verified
-macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 180 MB)
+macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 190 MB)
 ```
 
 The script installs exactly the versions in `uv.lock` (and the hash-pinned build

@@ -65,14 +65,29 @@ def _measures(f: Finding) -> str:
     return "; ".join(f"{k}={f.measures[k]}" for k in keys if f.measures.get(k, "") != "")
 
 
+def printable(text: str) -> str:
+    """A name for a line-based report: control characters (a newline in a file name) shown escaped."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
+
+
+def breath_model_state(report: RunReport) -> str:
+    """The run's breath model: "on", or "off" and why."""
+    state = report.tunables.get("breath_model", "off")
+    return "on" if isinstance(state, dict) else str(state)
+
+
 def issues_text(report: RunReport, min_sev: int = 1) -> str:
-    lines = [f"FinalPassAudioBook {report.version} — run {report.run_id} — rules: {report.rules}", *LEGEND]
+    run_state = breath_model_state(report)
+    lines = [f"FinalPassAudioBook {report.version} — run {report.run_id} — rules: {report.rules}", *LEGEND,
+             f"Breath model: {run_state}."]
     if min_sev > 1:
         lines.append(f"Listing severity {min_sev} and above only.")
     lines += [f"note: {n}" for n in report.notes]
     for fr in report.files:
         rows = shown(fr.findings, min_sev)
-        lines += ["", f"== {fr.file} — {tally(fr.findings)}"]          # every finding counted, listed or not
+        lines += ["", f"== {printable(fr.file)} — {tally(fr.findings)}"]  # every finding counted, listed or not
+        if fr.breath_model and fr.breath_model != run_state:
+            lines.append(f"   breath model: {fr.breath_model}")
         lines += [f"   note: {n}" for n in fr.notes]
         lines += [f"   {f.start_time}  sev {f.severity}  {f.problem}" for f in rows]
     return "\n".join(lines) + "\n"
@@ -83,7 +98,7 @@ def pauses_text(report: RunReport) -> str:
              "Informational. The kind of each pause is a GUESS from its length alone;",
              "the tool cannot see headings, sections or paragraphs."]
     for fr in report.files:
-        lines += ["", f"== {fr.file}"]
+        lines += ["", f"== {printable(fr.file)}"]
         for p in listed(fr.pauses):
             lines.append(f"   {p.start_time}  {p.duration_ms / 1000:6.2f} s  {p.guess}")
     return "\n".join(lines) + "\n"
@@ -266,9 +281,13 @@ def summary_rows(fr: FileResult, pauses: int | None, context: dict | None = None
             ["informational events", quiet + (pauses or 0), f"{quiet} quiet breaths",
              f"{pauses} pauses" if pauses is not None else "pause rows off"]]
     if "breaths" in c:
-        rows.append(["breaths", c["breaths"], f"{c.get('breaths_listed', 0)} problems",
-                     f"{c.get('mouth_click_inhales', 0)} mouth-click inhales", f"{c.get('quiet_breaths', 0)} quiet"])
+        row = ["breaths", c["breaths"], f"{c.get('breaths_listed', 0)} problems",
+               f"{c.get('mouth_click_inhales', 0)} mouth-click inhales", f"{c.get('quiet_breaths', 0)} quiet"]
+        if c.get("breaths_not_confirmed"):
+            row.append(f"{c['breaths_not_confirmed']} not confirmed by the breath model")
+        rows.append(row)
     rows += [["narration level", _level(fr.narration_dbfs)], ["noise floor", _level(fr.noise_floor_dbfs)]]
+    context = dict(context, **({"breath model": fr.breath_model} if fr.breath_model else {}))
     rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "breath model", "analysed") if context.get(k)]
     if fr.notes:
         rows.append(["notes", "", "", _cell("; ".join(fr.notes))])

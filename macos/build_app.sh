@@ -142,11 +142,13 @@ WEIGHTS_REL="$("$REPO/.venv/bin/python" -I -c "from finalpass_audiobook import m
 [ -f "$MODEL_SRC/$WEIGHTS_REL" ] || die "model not installed ($MODEL_SRC/$WEIGHTS_REL): run 'fpab setup-model' first"
 mkdir -p "$(dirname "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL")"
 cp "$MODEL_SRC/$WEIGHTS_REL" "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL"
+chmod 0644 "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL"     # every account on the Mac reads the app's weights
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "from finalpass_audiobook import model; model.load(); print('weights verified')"
 BREATH_REL="$("$REPO/.venv/bin/python" -I -c "from finalpass_audiobook import breath_model as b; print(b.WEIGHTS_SHA256[:12] + '/' + b.FILENAME)")"
 [ -f "$BREATH_SRC/$BREATH_REL" ] || die "breath model not installed ($BREATH_SRC/$BREATH_REL): run 'fpab setup-model' first"
 mkdir -p "$(dirname "$ENGINE/model/breath-respiro/$BREATH_REL")"
 cp "$BREATH_SRC/$BREATH_REL" "$ENGINE/model/breath-respiro/$BREATH_REL"
+chmod 0644 "$ENGINE/model/breath-respiro/$BREATH_REL"
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "from finalpass_audiobook import breath_model; breath_model.load(); print('breath model weights verified')"
 
 say "Trim what an analysis run never uses"
@@ -201,6 +203,7 @@ grep -q '"csv": null' "$SMOKE/broken.jsonl" || die "a broken WAV was not reporte
 sf.write(sys.argv[1], 0.01 * np.random.default_rng(1).standard_normal(44100 * 3), 44100, subtype='PCM_24')" "$SMOKE/ok.wav"
 FPAB_MODEL_DIR="$SMOKE/no-model" "$PY" "${FPAB[@]}" check --out "$SMOKE/rep" -- "$SMOKE/ok.wav" >/dev/null 2>&1
 grep -q "truncation check skipped" "$SMOKE/rep/issues.txt" || die "a missing model was not reported"
+grep -q "Breath model: off (model not installed)" "$SMOKE/rep/issues.txt" || die "a missing breath model was not reported"
 find "$ENGINE" -name '__pycache__' -type d -prune -exec rm -rf {} +
 echo "error paths ok"
 
@@ -220,6 +223,8 @@ sf.write(sys.argv[1], x, sr, subtype='PCM_24')" "$WARM/warm.wav"
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" "${FPAB[@]}" check --csv-dir "$WARM/out" --with-pauses --progress jsonl \
     -- "$WARM/warm.wav" >/dev/null
 [ -f "$WARM/out/warm.csv" ] || die "warm-up run wrote no CSV"
+grep -q "^breath model,on" "$WARM/out/warm.csv" || die "the bundled engine did not run the breath model"
+grep -q "^chopped-word check,on" "$WARM/out/warm.csv" || die "the bundled engine did not run the chopped-word model"
 # Compiled files record where their source was: recompile each under the path it has in the app.
 "$PY" -I - "$ENGINE" "$SHOWN" <<'PYC'
 import os, py_compile, sys
@@ -235,7 +240,7 @@ for root, _, files in os.walk(engine):
 PYC
 echo "compiled modules: $(find "$ENGINE" -name '*.pyc' | wc -l | tr -d ' ')"
 # The folders this build read from, as fixed strings (third-party files name their own build machines).
-leaked="$(grep -rlF -e "$REPO" -e "$PY_ROOT" -e "$MODEL_SRC" -e "$HOME/.cache" -e "$HOME/.local" "$APP" 2>/dev/null \
+leaked="$(grep -rlF -e "$REPO" -e "$PY_ROOT" -e "$MODEL_SRC" -e "$BREATH_SRC" -e "$HOME/.cache" -e "$HOME/.local" "$APP" 2>/dev/null \
           | head -5 || true)"                                   # grep finds none: exit 1
 [ -z "$leaked" ] || { echo "$leaked"; die "the app would carry this Mac's folder names"; }
 
@@ -287,6 +292,8 @@ leaks="$(find "$APP" -type l | while IFS= read -r l; do
     [[ "$t" == "$APP"/* && -e "$l" ]] || echo "$l -> $t"
 done)"
 [ -z "$leaks" ] || { echo "$leaks"; die "links leave the bundle"; }
+unreadable="$(find "$APP" -type f ! -perm -o=r | head -5)"     # another account on the Mac must be able to run it
+[ -z "$unreadable" ] || { echo "$unreadable"; die "files only their owner can read"; }
 
 say "Sign ($([ "$SIGN_ID" = "-" ] && echo "ad hoc" || echo "$SIGN_ID, hardened runtime")): every Mach-O file, found by its magic number"
 "$REPO/.venv/bin/python" -I - "$ENGINE" > "$STAGE/macho.txt" <<'PY'

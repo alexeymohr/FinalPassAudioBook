@@ -46,6 +46,7 @@ def _verify(path: Path) -> None:
 
 def _place(tmp: Path) -> Path:
     _verify(tmp)
+    os.chmod(tmp, 0o644)                        # readable by every account (the app bundles this file)
     dest = weights_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.replace(tmp, dest)
@@ -83,6 +84,20 @@ def download() -> Path:
         tmp.unlink(missing_ok=True)                     # the verified copy was moved into place already
 
 
+def has_metadata(raw: bytes) -> bool:
+    """Whether a safetensors file's header has a __metadata__ entry. The published weights must have none (CLAUDE.md):
+    nothing beyond the tensors' names and shapes may travel with them."""
+    import json
+    import struct
+    if len(raw) < 8:
+        return False
+    n = struct.unpack("<Q", raw[:8])[0]
+    try:
+        return "__metadata__" in json.loads(raw[8:8 + n])
+    except (ValueError, RecursionError):
+        return False                            # not parseable: parse_safetensors refuses it
+
+
 def installed() -> bool:
     try:
         return weights_path().is_file()
@@ -97,7 +112,7 @@ def load():
     from .truncation_np import WeightsError, parse_safetensors
 
     if not installed():
-        raise ModelError("breath model weights not installed — run `fpab setup-model`")
+        raise ModelError("breath model weights not installed (`fpab setup-model` installs them)")
     path = weights_path()
     try:
         with open(path, "rb") as fh:
@@ -112,6 +127,8 @@ def load():
     digest = hashlib.sha256(raw).hexdigest()
     if digest != WEIGHTS_SHA256:
         raise ModelError(f"{path}: SHA-256 {digest} does not match the recorded {WEIGHTS_SHA256}")
+    if has_metadata(raw):
+        raise ModelError(f"{path}: the weights file carries metadata; only bare tensors are allowed")
     try:
         return BreathModel(parse_safetensors(raw))
     except (WeightsError, ValueError, KeyError) as exc:

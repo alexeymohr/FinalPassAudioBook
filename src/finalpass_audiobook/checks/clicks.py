@@ -87,7 +87,11 @@ def rise_db(x: np.ndarray, sr: int, t: ClickTunables = ClickTunables()) -> tuple
     m = maximum_filter1d(db, size=w, axis=0, mode="nearest")
     idx = np.arange(db.shape[0])
     last = db.shape[0] - 1
-    around = np.maximum(m[np.clip(idx - gl - w // 2 - 1, 0, last)], m[np.clip(idx + gr + w // 2 + 1, 0, last)])
+    left, right = idx - gl - w // 2 - 1, idx + gr + w // 2 + 1
+    lm, rm = m[np.clip(left, 0, last)], m[np.clip(right, 0, last)]
+    # near a file's edge one side would be clamped onto the click itself: judge by the side that fits
+    lo, hi = (left < 0)[:, None], (right > last)[:, None]
+    around = np.where(lo, np.where(hi, np.maximum(lm, rm), rm), np.where(hi, lm, np.maximum(lm, rm)))
     k = min(t.top_bands, db.shape[1])
     return np.sort(db - around, axis=1)[:, -k:].mean(axis=1), n, hop
 

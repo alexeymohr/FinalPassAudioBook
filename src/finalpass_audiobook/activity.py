@@ -3,7 +3,11 @@
 A pause is measured word to word, the way a mixer measures it: breaths, mouth
 clicks and room tone inside a gap all count as pause. Levels are judged against
 the chapter's own narration level and its own quiet floor, so the same rule
-works on a digital-black edit and on one with room tone.
+works on a digital-black edit and on one with room tone. With digital-black
+pauses there is no floor to judge by: the quietest sounding moments are then the
+quietest speech, and a "floor" there trimmed every word (pauses 96 ms long, or no
+narration at all for even-levelled speech). So a file whose pauses are black is
+judged against its narration alone, and no floor counts within 10 dB of it.
 """
 from __future__ import annotations
 
@@ -22,6 +26,8 @@ CLICK_BRIDGE_MS = 30              # isolated sound shorter than this is a click,
 MIN_PAUSE_MS = 250
 BREATH_MASK_MIN_MS = 80.0
 BLACK_DBFS = -120.0
+BLACK_PAUSES_SHARE = 0.05          # this much of the file digital black: its pauses are black, it has no floor
+FLOOR_UNDER_NARRATION_DB = 10.0    # the threshold stays at least this far under the narration
 
 
 @dataclass(frozen=True)
@@ -50,15 +56,25 @@ def breath_spans(ch: Chapter) -> list[tuple[int, int]]:
     return [(b.start_sample, b.end_sample) for b in kept]
 
 
+def tunables() -> dict:
+    return {"sound_below_narration_db": SOUND_BELOW_NARRATION_DB, "sound_above_floor_db": SOUND_ABOVE_FLOOR_DB,
+            "env_window_ms": ENV_WINDOW_MS, "click_bridge_ms": CLICK_BRIDGE_MS, "min_pause_ms": MIN_PAUSE_MS,
+            "breath_mask_min_ms": BREATH_MASK_MIN_MS, "black_dbfs": BLACK_DBFS,
+            "black_pauses_share": BLACK_PAUSES_SHARE, "floor_under_narration_db": FLOOR_UNDER_NARRATION_DB}
+
+
 def measure(ch: Chapter) -> Activity:
     env = ch.envelope_db(ENV_WINDOW_MS)
     audible = env[env > BLACK_DBFS]
-    floor = float(np.percentile(audible, 10)) if audible.size else None
+    black = 1.0 - audible.size / env.size if env.size else 0.0
+    floor = float(np.percentile(audible, 10)) if audible.size and black < BLACK_PAUSES_SHARE else None
     level = ch.narration_dbfs
     candidates = [floor + SOUND_ABOVE_FLOOR_DB] if floor is not None else []
     if np.isfinite(level):
         candidates.append(level - SOUND_BELOW_NARRATION_DB)
     thr = max(candidates) if candidates else BLACK_DBFS
+    if np.isfinite(level):                           # a "floor" that close is the narration itself
+        thr = min(thr, level - FLOOR_UNDER_NARRATION_DB)
     sound = env >= thr
 
     spans = breath_spans(ch)

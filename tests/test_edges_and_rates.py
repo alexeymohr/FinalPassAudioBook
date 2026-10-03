@@ -52,6 +52,18 @@ def test_clicks_in_the_head_and_tail_are_found_through_the_whole_run(tmp_path: P
     assert problems == ["click before the first word", "click after the last word"]
 
 
+@pytest.mark.parametrize("where", ["start", "end"])
+@pytest.mark.parametrize("ms", [1, 5, 12])
+def test_a_click_in_the_first_or_last_few_ms_of_the_file_is_listed(tmp_path: Path, where: str, ms: int) -> None:
+    from test_clicks import _tick
+    x = _narration()
+    n = int(0.003 * SR)
+    at = int(ms * SR / 1000) if where == "start" else len(x) - int(ms * SR / 1000) - n
+    x[at:at + n] += _tick(-35.0)
+    problems = [f.problem for f in _analyse(tmp_path, x).findings]
+    assert problems == ["click before the first word" if where == "start" else "click after the last word"]
+
+
 def test_a_loud_hum_interrupted_by_a_patch_of_clean_room_tone_is_still_a_hum() -> None:
     from finalpass_audiobook.checks.hum import hum_findings
     x = _speech(60.0)
@@ -95,6 +107,18 @@ def test_low_rate_audio_skips_the_breath_check_with_a_note(tmp_path: Path) -> No
     fr = _analyse(tmp_path, x, sr=SR // 4)
     assert all(f.check != "breaths" for f in fr.findings + fr.informational)
     assert any(n.startswith("breath check skipped: 11.025 kHz") for n in fr.notes)
+
+
+@pytest.mark.parametrize("sr, skipped", [(16000, ["plosive", "digital-tick"]), (32000, ["digital-tick"]),
+                                         (44100, [])])
+def test_checks_a_rate_cannot_support_are_skipped_with_a_note(tmp_path: Path, sr: int, skipped: list[str]) -> None:
+    from scipy.signal import resample_poly
+    x = resample_poly(_narration(), sr // 100, SR // 100)
+    fr = _analyse(tmp_path, x, sr=sr)
+    noted = [n.split(" check skipped")[0] for n in fr.notes if " check skipped: " in n and "breath" not in n]
+    assert noted == skipped
+    assert all(f"{sr / 1000:g} kHz audio (needs more than" in n for n in fr.notes if " check skipped: " in n
+               and "breath" not in n)
 
 
 @pytest.mark.parametrize("claimed, cut", [(2_500_000_000, True), (0xFFFFFFFF, False), ("plus2", False)])

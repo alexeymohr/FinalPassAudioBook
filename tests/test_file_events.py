@@ -56,7 +56,7 @@ def test_a_nan_in_one_channel_of_dual_mono_is_corruption_not_a_difference(tmp_pa
     st[SR + 1000, 1] = np.nan
     fr = _analyse(tmp_path, st, subtype="FLOAT")
     assert fr.sample_rate == SR
-    assert _file_events(fr) == [(3, "file contains 1 invalid (NaN, Inf or out-of-range) samples — corrupt audio")]
+    assert _file_events(fr) == [(3, "file contains 1 invalid (NaN, Inf or out-of-range) sample — corrupt audio")]
 
 
 def test_a_run_of_nan_samples_is_listed_once_not_again_as_a_dropout_or_ticks(tmp_path: Path) -> None:

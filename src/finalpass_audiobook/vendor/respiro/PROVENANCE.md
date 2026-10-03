@@ -12,8 +12,9 @@ Every file here was read in full and is **unmodified** from that commit (git blo
 | `modules.py` | `f789e0986e3090d7df5f9f0f596d9e3601c6da514c3ac01a65920a493b840e46` |
 | `LICENSE` | `a34ad1af58dc7c02f867f620f7ddc952029b383c9b0dce349d54f6b875e079cd` |
 
-`modules.py` is the reference: fpab runs the model with its own numpy port (`breath_np.py`), held to this code (and to
-librosa for the features) within 1e-5 by the tests and on real chapters (no frame changes side of 0.5).
+`modules.py` is the reference: fpab runs the model with its own numpy port (`breath_np.py`). The tests hold the
+network to this code within 1e-5 (a small random network built from these classes) and the features to librosa within
+0.002 dB; with the real weights, whole chapters matched within 1e-5, no frame changing side of 0.5.
 
 ## The weights
 

@@ -33,7 +33,8 @@ never audio. Excerpts written for the operator's own listening stay on disk and
 are never read back.
 
 A local model may process client audio only when it runs fully offline under a
-network guard and emits numbers only (the chopped-word model, docs/PLAN.md §3.2).
+network guard and emits numbers only (the chopped-word model, docs/PLAN.md §3.2;
+the breath model, §3.1).
 
 ## Public repo: no client identifiers
 
@@ -41,13 +42,23 @@ This repository is public (MIT). Never commit book titles, ISBNs, project or
 order IDs, file names of client deliverables, or anything derived from client
 audio. Local evaluation data lives under `resources/` (gitignored).
 
-One exception (operator's decision, 2026-10-02): a model may be trained on client
-audio and its weights published, as long as the audio itself is not present and
-could never be recovered from what ships. Ship weights only — no audio, clips,
-features, labels, manifests, file names or titles, and nothing in the file's
-metadata — and only for a model whose outputs cannot reconstruct audio (the breath
-model: one probability per 10 ms). Its training data and scripts stay in
-`resources/`.
+One exception (operator's decision, 2026-10-02, tightened 2026-10-03): weights
+trained on client audio may be published, but only when all of these hold:
+
+- The operator has approved that model by name. So far: the breath model
+  (Respiro-en fine-tuned, `breath-model-v2`). Any other model, or a retrain that
+  changes what it does, needs its own approval first.
+- Its output is a low-dimensional per-frame score (the breath model: one
+  probability per 10 ms). Never a model that outputs text or words (speech
+  recognition, alignment to a transcript), speaker embeddings or identity,
+  generated audio, or anything else that could give back the content, the
+  narrator or the titles it was trained on.
+- It was trained here, fully offline under the network guard, as any model
+  touching client audio must run.
+- Only the bare tensors ship: no audio, clips, features, labels, manifests,
+  file names or titles, and no `__metadata__` in the weights file (the loader
+  refuses a file that has any).
+- Its training data, labels and scripts stay in `resources/`.
 
 ## Models and dependencies
 
@@ -57,7 +68,8 @@ model: one probability per 10 ms). Its training data and scripts stay in
   install. The base tool is numpy/scipy DSP.
 - Model code is vendored after a full read (licence kept alongside). Never
   `trust_remote_code=True`; never unrestricted pickle — safetensors only, loaded
-  with `load_state_dict(strict=True)`.
+  strictly (the exact key set and shapes; the numpy ports check them, the torch
+  references use `load_state_dict(strict=True)`).
 - Model weights are fetched only by an explicit setup command, from a pinned
   revision, and verified against a recorded SHA-256. Analysis runs never
   download anything; they run under a network guard that refuses sockets.

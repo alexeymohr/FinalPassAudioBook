@@ -1,8 +1,9 @@
 # FinalPassAudioBook — design and plan
 
-**Status (2026-09-30):** milestone 1 built, followed by the severity scale, the hum
-work, the macOS app, the numpy model port, a four-part adversarial audit and a
-six-part pre-publish review, each with its fixes. Evidence below is from one delivered audiobook (12 chapters used for
+**Status (2026-10-03):** milestone 1 built, followed by the severity scale, the hum
+work, the macOS app, the numpy model port, a four-part adversarial audit, a
+six-part pre-publish review, milestone 3 (every breath confirmed by a local breath
+model, 0.2.0) and a seven-part review of 0.2.0, each with its fixes (0.2.1). Evidence below is from one delivered audiobook (12 chapters used for
 calibration), reported only as anonymous aggregates; the client-specific record
 is kept privately, outside this repository.
 
@@ -11,7 +12,8 @@ is kept privately, outside this repository.
 ```
 fpab check CHAPTERS_OR_FOLDERS... [--rules standard|no-paragraph] [--out DIR] [--min-sev 1|2|3]
            [--csv-per-file] [--csv-dir DIR] [--with-pauses] [--progress text|jsonl] [--no-truncation]
-fpab setup-model [--from-file model.safetensors]
+           [--no-breath-model]
+fpab setup-model [--from-file model.safetensors] [--breath-from-file respiro-en-fpab-v2.safetensors]
 fpab rules
 ```
 
@@ -19,12 +21,15 @@ fpab rules
   time order (`file, start_time, end_time, event, severity, check, measures`); skipped
   files are listed with the reason.
 - `pauses.txt` / `pauses.csv`: the pause map (informational).
-- `report.json`: everything — tunables, every measurement, every scored clip end,
-  network attempts (must be 0).
+- `report.json`: everything — tunables (as the run used them), every measurement, every
+  scored clip end, whether the breath model ran on each file, network attempts (must be 0).
+- `fpab setup-model` installs both models; one already installed and verified is left
+  as it is, so `--from-file` alone needs no network once the breath model is in place.
 - `--csv-per-file`: one CSV per WAV (`<name>.csv`, beside it or in `--csv-dir`). It
   opens with a summary (a label, then one short fact per cell: file, format, duration, problem
   and informational event counts, narration level, noise floor, rule set, whether the
-  chopped-word check ran, when, a breaths line), then the problem events (every
+  chopped-word check ran, whether the breath model ran on this file (or why not), when,
+  a breaths line with any the model did not confirm), then the problem events (every
   finding, severity 1-3) in time order, then, a few empty rows below, the
   informational events (quiet breaths, and the pause map when asked for). The CSVs
   show the two to four measures per check a mixer uses; `report.json` keeps them all. An
@@ -120,7 +125,9 @@ text rounds, as for hum and plosive).
     vendored, unmodified torch code; 16 kHz input in 30 s windows (the middle 20 s kept);
     weights installed only by `fpab setup-model` (size and SHA-256 checked); analysis
     under the network guard. Without the model the breaths are listed as before and every
-    report says "breath model: off".
+    report says "breath model: off" and why; below 16 kHz the model does not run on that
+    file, and a file it fails on keeps its breaths unconfirmed (with a note), never losing
+    its other checks.
 
 ### 3.2 Word ends abruptly at a clip end (local model)
 
@@ -146,7 +153,9 @@ edges of all 12 hums on the calibration title): 1 for a low-level hum, most of t
 2 when strong (loudest line ≥ −55 dBFS; the two called strong measured −53.8 and
 −54.3, the loudest of the rest −55.5); 3 when strong and it starts or cuts off
 abruptly. On that title: 2 at severity 3, 10 at 1. Graded on the whole-dB level the
-text shows; a hum that builds, on the level it reaches.
+text shows; a hum that builds, on the level it reaches. The loudest line may be a
+harmonic, shown as such ("-50 dBFS at 180 Hz"); a weak 60 Hz under strong 180/300 Hz
+lines once read −70 dBFS, severity 1.
 - Tracked in 2 s windows (a line ≥ 10 dB over its ±10 Hz neighbourhood, held within
   1 Hz for ≥ 3 s; pieces of one line up to 3 s apart joined). A tracked line must
   also be heard in a nearby pause, unless there are no pauses around it (a hum
@@ -161,11 +170,29 @@ text shows; a hum that builds, on the level it reaches.
 - Found in the pauses (speech hides lines in the voice's range): the same line in
   ≥ 2 pauses over ≥ 3 s, at least −70 dBFS (operator's floor). Evidence: 11 found,
   all 11 confirmed by ear.
+- A hum in the voice's range loud enough to fill every pause (less than 30 dB under
+  the voice) and kept from tracking by speech at its pitch: its pauses are the gaps
+  ≥ 15 dB under the voice that it fills — flat (within 3 dB), carried by one steady
+  line (within 6 dB of the gap), and alike (the same line, ±0.5 Hz and ±3 dB, in
+  another such gap within 10 s). A tracked line whose pauses carry it well beyond its
+  track (speech broke it into pieces) is described from those pauses. Synthetic
+  100-300 Hz hums at −47 and −40 dBFS, once missed or split into pieces that each
+  "started abruptly", are each one hum at their level. On the calibration title 4
+  gaps at the narrator's own pitch were flat and one line, none had a twin, and the
+  12 chapters list exactly the same 12 hums, edges and severities as before. The
+  limit: such a hum's start or cut under a word is placed between the pauses either
+  side (and may go unnamed).
+- Harmonics: a whole multiple within 0.6 Hz (tracked; 0.02 Hz per multiple beyond)
+  or 1 Hz (in the pauses; 0.05 Hz per multiple), sounding mostly while the hum does.
+  The 1 % once used let an unrelated 987 Hz hum pass as 41 Hz × 24, and any overlap
+  let a later hum at a multiple vanish into an earlier one.
 - Described from its pauses: every steady line there, loudest first, harmonics
   named (in the measures; the event text stays short: the tone or tones, level and
   edges, e.g. "hum 58.8 Hz, -70 dBFS, cuts off abruptly"). Start and end from the tone's own level; "starts/cuts off abruptly" when
   it changes by ≥ 20 dB in 0.5 s from full level, or — when the cut lands on a
-  word — by ≥ 10 dB in 0.2 s and the line is gone from the next pause. Heard blind
+  word — by ≥ 10 dB in 0.2 s and the line is gone from the next pause; a word in the
+  tone's band above its full level is not part of the step (a hum running to the end
+  of a file read "cuts off abruptly" from one). Heard blind
   on all 24 edges: 6 of the 8 claimed abrupt were; 2 of the 16 others were abrupt
   too (7 could not be judged). None of the misses changes a severity.
 
@@ -173,7 +200,8 @@ text shows; a hum that builds, on the level it reaches.
 
 Minimum statistics per ⅓-octave band (per-frame DC removed; a band's floor capped
 at its running mean so a steady tone is not inflated; bands carrying a listed hum
-left out while it sounds). Listed when the floor comes within 41 dB of the
+left out while it sounds, farther either side the louder it is: a −40 dBFS tone's
+sidelobes lifted bands 110 Hz away by 35 dB). Listed when the floor comes within 41 dB of the
 narration for about 5.5 s; severity by the gap under the local speech: 3 < 25 dB,
 2 < 32 dB, else 1. Files with no narration are graded on absolute level
 (3 ≥ −45, 2 ≥ −51 dBFS). Evidence: 6 of the title's 7 QC-noted noisy blocks found;
@@ -201,7 +229,8 @@ Severity by level (the whole dB shown): 1 from −42 dBFS, 2 from −34, 3 from 
 overlapping a mouth-click inhale or up to 200 ms after it is part of that breath's entry. Evidence: 10 of 12
 QC-noted pops; a blind round of 32 looser candidates: 10 of 11 wanted, 1 of 21 others
 (limits set on those clips); held out, 29 of 32 listings were plosives by ear. About 11 per
-15-minute chapter.
+15-minute chapter. Skipped, with a note, at 16 kHz and below (the word's high band is not
+there).
 
 ### 3.7 Click in a pause
 
@@ -215,8 +244,8 @@ the words and from any breath on both sides (a breath's own mouth click belongs 
 the breath check). Evidence: 64 candidates from looser rules heard across 12
 chapters, 2 confirmed ticks; this rule lists exactly those 2 and nothing else in the
 12 chapters. Set on the same chapters, so a second title must confirm it. The same
-rule covers the room tone before the first word and after the last (only the word
-side needs the 100 ms).
+rule covers the room tone before the first word and after the last, to the file's very
+first and last milliseconds (only the word side needs the 100 ms).
 
 ### 3.8 Digital tick
 
@@ -234,13 +263,19 @@ clip stops is listed once, as the tick. A tick within 10 ms of the file's start 
 is judged on the one side there is. At 88.2 kHz and up the test looks only at
 16.5-22.05 kHz and measures sample steps over one 44.1 kHz sample, so it behaves as at
 44.1/48 kHz (a one-sample spike at 192 kHz holds a quarter of the energy and is listed
-from about −34 dBFS).
+from about −34 dBFS). Skipped, with a note, at 34.7 kHz and below (no band above
+16.5 kHz to look in).
 
 ### 3.9 Pause map (informational)
 
 Every pause word to word, with its duration and a guess at its kind from the
 chosen generic rule set; head/tail compared with the rule (±0.1 s). No severity.
-The guess reads the length as listed (0.01 s).
+The guess reads the length as listed (0.01 s). Sound is what stands 8 dB over the
+quiet floor or within 45 dB of the narration. A file whose pauses are digital black
+(≥ 5 % exact silence; the calibration chapters hold about 1 %, at the head and
+tail) has no floor: its quietest sounding moments are speech, and taking them as
+the floor trimmed every word (pauses 96 ms long) or, for evenly levelled speech,
+found no narration at all. And no floor counts within 10 dB of the narration.
 
 ### 3.10 File problems
 
@@ -256,7 +291,7 @@ A small SwiftUI window (`macos/`): drop WAVs or folders (not searched recursivel
 Go, a progress bar, one CSV per WAV beside it (`<name>.csv`) or in a chosen folder,
 optional pause rows. **Fully sandboxed with no network entitlement**; the engine
 (a copied Python with fpab, the `uv.lock` versions and the verified weights, about
-180 MB in all) is bundled and runs inside the sandbox. The sandbox allows only
+190 MB in all) is bundled and runs inside the sandbox. The sandbox allows only
 `<name>.csv` beside a WAV it was given, so where that name already exists (or two WAVs
 share it) the app asks once for that folder and writes `<name> (2).csv`. A CSV that
 cannot be placed is kept and can be saved later.

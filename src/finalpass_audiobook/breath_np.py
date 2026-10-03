@@ -14,16 +14,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import gcd
-from pathlib import Path
 
 import numpy as np
 from scipy.signal import firwin, resample_poly
 
-from .truncation_np import WeightsError, read_safetensors
+from .truncation_np import WeightsError
 
 SR = 16000
 N_FFT, HOP, N_MELS = 400, 160, 128
 WINDOW_S, KEEP_S = 30, 20
+MIN_SAMPLES = 3 * HOP          # the network needs 4 frames (two stride-2 convolutions); shorter audio is padded
+MAX_TAPS = 4_000_000           # resampling filter cap: odd rates (e.g. 47,999 Hz) would otherwise need gigabytes
 
 
 @dataclass(frozen=True)
@@ -134,13 +135,15 @@ def to_16k(x: np.ndarray, sr: int) -> np.ndarray:
     """Polyphase resampling to 16 kHz (the model's rate) with a long, sharp anti-alias filter (64 zero crossings,
     Kaiser beta 8, cut-off at 0.96 of the new Nyquist). The model was trained on audio librosa resampled with soxr's
     high-quality setting; this filter is 8x closer to that than scipy's default (rms difference 0.0028 against
-    0.023 on a test chirp) and changes 3-7x fewer frames' side of 0.5 on real chapters."""
+    0.023 on a test chirp) and changes 3-7x fewer frames' side of 0.5 on real chapters. Rates that share few factors
+    with 16 kHz get fewer zero crossings (at least 8), so the filter stays under MAX_TAPS."""
     if sr == SR:
         return np.asarray(x, np.float32)
     g = gcd(SR, int(sr))
     up, down = SR // g, int(sr) // g
     m = max(up, down)
-    h = firwin(2 * 64 * m + 1, 0.96 / m, window=("kaiser", 8.0))
+    zeros = int(np.clip(MAX_TAPS // (2 * m), 8, 64))
+    h = firwin(2 * zeros * m + 1, 0.96 / m, window=("kaiser", 8.0))
     return resample_poly(np.asarray(x, np.float64), up, down, window=h).astype(np.float32)
 
 
@@ -271,9 +274,12 @@ class BreathModel:
         return _sigmoid(logit)[:t_in].astype(np.float32)
 
     def probs(self, y16: np.ndarray) -> np.ndarray:
-        """Breath probability per 10 ms frame (frame i is centred on i * 10 ms) for 16 kHz audio of any length."""
-        y16 = np.asarray(y16, np.float32)
+        """Breath probability per 10 ms frame (frame i is centred on i * 10 ms) for 16 kHz audio of any length.
+        Non-finite samples count as silence; audio shorter than the network's four frames is padded with silence."""
+        y16 = np.nan_to_num(np.asarray(y16, np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         n = 1 + len(y16) // HOP
+        if len(y16) < MIN_SAMPLES:
+            return self.probs(np.pad(y16, (0, MIN_SAMPLES - len(y16))))[:n]
         out = np.zeros(n, np.float32)
         step, margin = KEEP_S * SR, (WINDOW_S - KEEP_S) // 2 * SR
         start = 0
@@ -287,7 +293,3 @@ class BreathModel:
             if last:
                 return out
             start += step
-
-
-def build(weights_path: Path) -> BreathModel:
-    return BreathModel(read_safetensors(weights_path))

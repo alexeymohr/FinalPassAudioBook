@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 SEVERITIES = (3, 2, 1)   # 3 worst, 1 lowest; nothing here is a rejection
 
 
@@ -49,6 +49,7 @@ class FileResult(BaseModel):
     pauses: list[Pause]
     truncation_candidates: list[dict] = []
     counts: dict[str, int] = {}
+    breath_model: str = ""          # "on", or "off" and why: whether the breath model confirmed this file's breaths
     notes: list[str] = []
 
 

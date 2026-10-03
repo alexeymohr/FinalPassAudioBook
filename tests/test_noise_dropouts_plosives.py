@@ -263,3 +263,17 @@ def test_the_noise_floor_keeps_time_at_22050_hz() -> None:
     _, hop_s = floor_track(np.full(22050 * 3, 1e-3), 22050)
     assert hop_s == 220 / 22050                                   # 10 ms is 220.5 samples there
     assert floor_track(np.full(44100 * 3, 1e-3), 44100)[1] == 0.01
+
+
+def test_a_loud_listed_hum_does_not_lift_the_floor_around_it() -> None:
+    """A -40 dBFS tone's sidelobes lifted bands 110 Hz away from -100 to -65 dBFS: the reach left out
+    grows with the hum's level."""
+    x = np.concatenate([phrase(5), room(0.5)] * 8)
+    t = np.arange(len(x)) / SR
+    hum = 10 ** (-40 / 20) * np.sqrt(2) * np.sin(2 * np.pi * 180.0 * t)
+    clean, _ = floor_track(x, SR)
+    whole = len(x) / SR
+    quiet, _ = floor_track(x + hum, SR, exclude=[([180.0], 0.0, whole, -60.0)])   # the old fixed reach
+    loud, _ = floor_track(x + hum, SR, exclude=[([180.0], 0.0, whole, -40.0)])
+    assert np.median(quiet) - np.median(clean) > 10.0
+    assert np.median(loud) - np.median(clean) < 4.0                 # its farther sidelobes: about 3 dB

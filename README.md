@@ -23,7 +23,7 @@ network and process routes it knows of and records the count, which must be 0
 | Digital tick (a spike above 16.5 kHz, a few samples long, standing alone) | 3 | a guard: none on a whole title; 40 of 40 planted spikes in pauses found |
 | Dropout (dead digital silence for a frame or less, about 33 ms, inside audible sound) | 3 | a guard: none in 17 chapters of two titles; planted holes of 10 samples to 15 ms inside words all found |
 | Word ends abruptly where a generated clip ends (local model) | 1 | four titles: found all 9 real chops on one; elsewhere only hard endings, nothing missing |
-| Hum (a steady tone, also found in the pauses when speech covers it) | 1; 2 when strong (shown as −55 dBFS or more); 3 when strong and it starts or stops abruptly | 12 of 12 listed hums confirmed by ear on one title |
+| Hum (a steady tone, also found in the pauses when speech covers it) | 1; 2 when strong (its loudest line, harmonics too, shown as −55 dBFS or more); 3 when strong and it starts or stops abruptly | 12 of 12 listed hums confirmed by ear on one title |
 | Noisy section (noise floor within 41 dB of the narration for about 5.5 s) | 3 / 2 / 1 as the floor comes within 25 / 32 / 41 dB of the speech | 6 of one title's 7 QC-noted noisy blocks |
 | File problem (corrupt or out-of-range samples, audio cut short of its header, no narration found, under 1 s) | 3 | checked on synthetic files |
 | Pause map with a guess at each pause's kind | informational | two generic rule sets (`fpab rules`) |

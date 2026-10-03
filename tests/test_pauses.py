@@ -75,3 +75,35 @@ def test_tolerance_is_symmetric_to_the_millisecond() -> None:
     for s in (0.9, 1.1):
         assert "matches" in head_or_tail_note(s, 1.0, "chapter start")
     assert "longer" in head_or_tail_note(1.101, 1.0, "chapter start")
+
+
+def _all_black_gaps() -> np.ndarray:
+    """The pause layout with every gap — between words too — exact digital silence."""
+    x, marks = _layout()
+    y = x.copy()
+    env = np.convolve(np.abs(x) > 10 ** (-60 / 20), np.ones(int(0.004 * SR)), mode="same") > 0
+    y[~env] = 0.0
+    return y
+
+
+def test_digital_black_pauses_measure_as_room_tone_pauses_do() -> None:
+    """With black pauses the quietest sounding moments are speech: taken as the floor, they trimmed every
+    word (pauses 96 ms long), or with even-levelled words found no narration at all."""
+    x, _ = _layout()
+    rules = RULE_SETS["standard"]
+    room_map = [(p.kind, p.duration_ms) for p in listed(pause_map(chapter(x), measure(chapter(x)), rules))]
+    ch = chapter(_all_black_gaps())
+    act = measure(ch)
+    assert act.floor_dbfs is None
+    black_map = [(p.kind, p.duration_ms) for p in listed(pause_map(ch, act, rules))]
+    assert [k for k, _ in black_map] == [k for k, _ in room_map]
+    assert all(abs(a - b) <= 20 for (_, a), (_, b) in zip(black_map, room_map)), (black_map, room_map)
+
+
+def test_even_levelled_speech_with_no_pauses_is_narration() -> None:
+    t = np.arange(6 * SR) / SR
+    x = 0.1 * sum(np.sin(2 * np.pi * k * 140 * t * (1 + 0.02 * np.sin(2 * np.pi * 3 * t))) / k for k in range(1, 10))
+    ch = chapter(x)
+    act = measure(ch)
+    assert np.isfinite(ch.narration_dbfs) and act.first_sound == 0          # not "no narration found"
+    assert act.threshold_dbfs <= ch.narration_dbfs - 10.0

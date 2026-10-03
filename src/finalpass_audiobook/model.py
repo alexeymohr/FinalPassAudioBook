@@ -60,6 +60,7 @@ def _verify(path: Path) -> None:
 
 def _place(tmp: Path) -> Path:
     _verify(tmp)
+    os.chmod(tmp, 0o644)                        # readable by every account (the app bundles this file)
     dest = weights_path()
     dest.parent.mkdir(parents=True, exist_ok=True)
     os.replace(tmp, dest)
@@ -110,7 +111,7 @@ def load():
     from .truncation_np import WeightsError, build_from_bytes
 
     if not installed():
-        raise ModelError("model weights not installed — run `fpab setup-model`")
+        raise ModelError("model weights not installed (`fpab setup-model` installs them)")
     path = weights_path()
     try:
         with open(path, "rb") as fh:                # one open: the size checked is the file read
@@ -134,7 +135,7 @@ def load():
 def load_reference():
     """The audited torch model (needs the `truncation` extra): the reference for the numpy port."""
     if not installed():
-        raise ModelError("model weights not installed — run `fpab setup-model`")
+        raise ModelError("model weights not installed (`fpab setup-model` installs them)")
     _verify(weights_path())
     try:
         from safetensors.torch import load_file

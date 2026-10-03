@@ -351,7 +351,7 @@ final class RunModel {
             status = "File \(fileIndex + 1) of \(n): \(items[fileIndex].url.lastPathComponent)"
         case "stage":
             if (e.index ?? 0) < 0 {
-                status = "Loading the chopped-word model…"
+                status = "Loading the models…"
             } else if let step = e.step, let steps = e.steps, steps > 0, step >= 0 {
                 progress = min(1, (Double(fileIndex) + Double(step + 1) / Double(steps)) / Double(n))
                 status = "File \(fileIndex + 1) of \(n): \(items[safe: fileIndex]?.url.lastPathComponent ?? "") — \(e.stage ?? "")"

@@ -153,3 +153,86 @@ def test_a_held_voiced_note_is_not_confirmed_in_gaps_as_a_hum() -> None:
     from finalpass_audiobook.checks.hum import HumTunables, _filled_gaps
     ch = chapter(_speech(10.0))
     assert _filled_gaps(ch, HumTunables(), 0.0, 10.0, ch.narration_dbfs - 2.0) == []
+
+
+# --- added after the 0.2.0 review ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("hz, dbfs", [(120.0, -47.0), (120.0, -40.0), (180.0, -47.0), (150.0, -40.0), (100.0, -40.0)])
+def test_a_hum_in_the_voices_range_loud_enough_to_fill_the_pauses_is_one_hum(hz: float, dbfs: float) -> None:
+    """Too loud for the 30 dB pauses, buried in the voice's own pitch for tracking (or tracked in pieces):
+    once missed, split into pieces that each "started abruptly", or (100 Hz) read 5 dB high and "cut off
+    abruptly" at the end of the file — a word in the tone's band is not its edge."""
+    x = _speech(40.0)
+    (f,) = _hums(x + _tone(len(x), hz, dbfs))
+    assert abs(f.measures["frequency_hz"] - hz) < 0.3 and abs(f.measures["level_dbfs"] - dbfs) < 1.5
+    assert "abruptly" not in f.problem and f.severity == 2
+    assert f.start_sample / SR < 3.0 and f.end_sample / SR > 37.0
+
+
+def test_a_loud_hum_in_the_voices_range_mid_chapter_is_one_hum_over_its_span() -> None:
+    """Its edges fall under words, where the voice fills the tone's band: they are placed between the
+    pauses either side (2.6 s apart here), not to the tenth of a second."""
+    x = _speech(40.0)
+    (f,) = _hums(x + _tone(len(x), 180.0, -47.0, 10.0, 30.0))
+    assert abs(f.measures["level_dbfs"] + 47.0) < 1.5 and f.severity == 3
+    assert abs(f.start_sample / SR - 10.0) < 2.0 and abs(f.end_sample / SR - 30.0) < 2.0
+
+
+def _gappy(gaps: list[tuple[float, float]]) -> np.ndarray:
+    """Phrases with 0.5 s gaps; gap i holds a steady tone (Hz, dBFS) when given, room tone otherwise."""
+    parts = []
+    for i in range(6):
+        parts.append(phrase(4))
+        g = room(0.5)
+        if i < len(gaps) and gaps[i]:
+            hz, dbfs = gaps[i]
+            g = g + _tone(len(g), hz, dbfs)
+        parts.append(g)
+    return np.concatenate(parts)
+
+
+def test_a_filled_pause_must_have_a_twin_nearby() -> None:
+    """A gap a loud hum fills is a pause; one soft held voiced sound at the narrator's pitch is not (on the
+    calibration title 4 such gaps were flat and one line), and neither are two at different pitches."""
+    from finalpass_audiobook.checks.hum import HumTunables, _pauses
+    t = HumTunables()
+
+    def filled(gaps):
+        ch = chapter(_gappy(gaps))
+        return [p for p in _pauses(ch, t) if p not in _pauses(chapter(_gappy([])), t)]
+
+    assert len(filled([(99.0, -38.0), (99.0, -38.0)])) == 2
+    assert filled([(99.0, -38.0)]) == []
+    assert filled([(99.0, -38.0), (99.9, -38.0)]) == []                  # 0.9 Hz apart: not one hum
+    assert filled([(99.0, -38.0), (99.0, -43.0)]) == []                  # 5 dB apart: not one hum
+
+
+def test_a_harmonic_louder_than_its_tone_sets_the_level() -> None:
+    """Operator: a strong hum is one whose loudest line reaches -55 dBFS — a weak 60 Hz under strong
+    180/300 Hz lines read -70 dBFS, severity 1."""
+    x = _speech(40.0)
+    n = len(x)
+    (f,) = _hums(x + _tone(n, 60.0, -70.0) + _tone(n, 180.0, -50.0) + _tone(n, 300.0, -52.0))
+    assert f.problem.startswith("hum 60.0 Hz, -50 dBFS at 180 Hz") and f.severity == 2
+    assert f.measures["loudest_line_hz"] == 180 and abs(f.measures["level_dbfs"] + 50.0) < 1.0
+
+
+def test_a_later_hum_at_a_multiple_is_its_own_hum() -> None:
+    x = _speech(40.0)
+    x = x + _tone(len(x), 50.0, -55.0, 0.0, 25.0) + _tone(len(x), 150.0, -55.0, 15.0, 40.0)
+    spans = sorted((round(f.measures["frequency_hz"]), f.start_sample / SR, f.end_sample / SR) for f in _hums(x))
+    assert [s[0] for s in spans] == [50, 150], spans
+    assert spans[0][2] < 26.0 and abs(spans[1][1] - 15.0) < 1.5 and spans[1][2] > 38.0
+
+
+def test_an_unrelated_tone_near_a_high_multiple_is_not_a_harmonic() -> None:
+    from finalpass_audiobook.checks.hum import HumTunables, _group, _is_multiple, _Track
+    base = _Track(0, 20, [41.0] * 21, [-60.0] * 21, [20.0] * 21)
+    far = _Track(0, 20, [987.0] * 21, [-60.0] * 21, [20.0] * 21)          # 41 x 24 = 984
+    real = _Track(0, 20, [984.1] * 21, [-70.0] * 21, [12.0] * 21)
+    late = _Track(12, 40, [123.0] * 29, [-60.0] * 29, [20.0] * 29)        # x 3, but mostly after the hum
+    groups = _group([base, far, real, late], HumTunables())
+    assert [(round(g.freqs[0]), [round(h.freqs[0]) for h in hs]) for g, hs in groups] == [
+        (41, [984]), (123, []), (987, [])]
+    assert not _is_multiple(987.0, 41.0) and _is_multiple(984.4, 41.0) and _is_multiple(198.6, 99.2)

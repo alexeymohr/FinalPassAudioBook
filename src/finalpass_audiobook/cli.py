@@ -134,9 +134,9 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     """Check chapter files (or folders of them) and write the issue list and pause map."""
     import json
 
-    from . import breath_model
     from .model import installed
-    from .output import RUN_FILES, _real, csv_name, file_csv, name_key, run_report_clashes, tally, write
+    from .output import (RUN_FILES, _real, breath_model_state, csv_name, file_csv, name_key, printable,
+                         run_report_clashes, tally, write)
     from .run import STAGES, RunOptions, run
 
     files = _expand(paths)
@@ -165,7 +165,6 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     from . import __version__
     csv_context = {"version": __version__, "rules": rules_name,
                    "chopped-word check": "off" if not opts.truncation else "off (model not installed)",
-                   "breath model": "off" if not opts.breath_model else "off (model not installed)",
                    "analysed": datetime.now().strftime("%Y-%m-%d %H:%M")}
     failed_csv: list[int] = []
 
@@ -175,11 +174,6 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                 "off (model not installed)" if not installed() else f"off (model could not be loaded: {why})")
         if not ok and "chopped words" in stages:        # the progress no longer counts a step that never comes
             stages.remove("chopped words")
-
-    def breath_model_loaded(ok: bool, why: str = "") -> None:
-        if opts.breath_model:
-            csv_context["breath model"] = "on" if ok else (
-                "off (model not installed)" if not breath_model.installed() else f"off (model could not be loaded: {why})")
 
     def file_done(i: int, fr) -> None:
         csv_path = None
@@ -211,11 +205,11 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                      stage=lambda i, name: emit(event="stage", index=i, stage=name,
                                                 step=stages.index(name) if name in stages else -1,
                                                 steps=len(stages)),
-                     file_done=file_done, model_loaded=model_loaded, breath_model_loaded=breath_model_loaded)
+                     file_done=file_done, model_loaded=model_loaded)
     else:
         with err.status("Checking...") as status:
             report = run(files, opts, progress=lambda i, n, p: status.update(f"Checking {i + 1}/{n}: {p.name}"),
-                         file_done=file_done, model_loaded=model_loaded, breath_model_loaded=breath_model_loaded)
+                         file_done=file_done, model_loaded=model_loaded)
     written, report_error = [], None
     if out_dir is not None and (clash := run_report_clashes(out_dir)):          # appeared during the run
         report_error = (f"did not write the run report: {out_dir} now holds "
@@ -230,8 +224,9 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     for fr in report.files:
         worst = max((f.severity for f in fr.findings), default=0)
         colour = "red" if not fr.sample_rate else {3: "red", 2: "yellow", 1: "cyan"}.get(worst, "green")
-        say.print(f"[{colour}]{escape(fr.file)}[/{colour}]  {tally(fr.findings)}"
+        say.print(f"[{colour}]{escape(printable(fr.file))}[/{colour}]  {tally(fr.findings)}"
                   + "".join(f"  [dim]({escape(n)})[/dim]" for n in fr.notes), soft_wrap=True)
+    say.print(escape(f"breath model: {breath_model_state(report)}"), soft_wrap=True)
     say.print(f"network attempts: {report.network_attempts}")
     for p in [*written, *written_csv.values()]:
         say.print(escape(f"Wrote {p}"), soft_wrap=True)
@@ -250,15 +245,25 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
               help="Install an already-downloaded breath model (respiro-en-fpab-v2.safetensors) instead of downloading it.")
 def setup_model_cmd(from_file: Path | None, breath_from_file: Path | None) -> None:
     """Install both models' weights: the truncated-word model and the breath model (each verified against its
-    recorded size and SHA-256)."""
+    recorded size and SHA-256). A model already installed and verified is left as it is (no download), so
+    `--from-file` alone stays offline once the breath model is in place."""
+    import http.client
+
     from . import breath_model, model
 
     failed = False
     for name, mod, src in (("truncated-word model", model, from_file), ("breath model", breath_model, breath_from_file)):
         try:
-            dest = mod.install_from_file(src) if src else mod.download()
-        except (model.ModelError, OSError) as exc:
-            err.print(f"[red]error:[/red] {name}: {exc}", soft_wrap=True)
+            if src:
+                dest = mod.install_from_file(src)
+            elif mod.installed():
+                mod._verify(mod.weights_path())
+                out.print(escape(f"The {name} is already installed and verified: {mod.weights_path()}"), soft_wrap=True)
+                continue
+            else:
+                dest = mod.download()
+        except (model.ModelError, OSError, ValueError, http.client.HTTPException) as exc:
+            err.print(f"[red]error:[/red] {escape(f'{name}: {type(exc).__name__}: {exc}')}", soft_wrap=True)
             failed = True
             continue
         out.print(escape(f"Installed and verified the {name}: {dest}" + ("" if src else f" (from {mod.WEIGHTS_URL})")),

@@ -197,7 +197,7 @@ def test_min_sev_filters_the_lists_but_json_keeps_everything(tmp_path: Path) -> 
     assert [r.split(",")[4] for r in rows[1:]] == ["3", "2"]
     assert "one" not in (tmp_path / "issues.txt").read_text()
     report = json.loads((tmp_path / "report.json").read_text())
-    assert report["schema_version"] == 4
+    assert report["schema_version"] == 5
     assert [f["severity"] for f in report["files"][0]["findings"]] == [1, 3, 2]
 
 

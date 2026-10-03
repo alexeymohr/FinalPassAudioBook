@@ -15,6 +15,7 @@ from finalpass.errors import FinalPassError
 
 from . import __version__
 from .activity import measure
+from .activity import tunables as pause_tunables
 from . import breath_model as breath_weights
 from .breath_np import to_16k
 from .chapter import Chapter, ChapterError
@@ -51,12 +52,18 @@ class RunOptions:
     ticks: TickTunables = field(default_factory=TickTunables)
     truncation_tunables: TruncationTunables = field(default_factory=TruncationTunables)
 
-    def tunables(self) -> dict:
-        return {"breaths": self.breaths.as_dict(), "breath_severity": self.breath_severity.as_dict(),
-                "breath_model": self.breath_confirm.as_dict() if self.breath_model else "off",
+    def tunables(self, breath_state: str | None = None) -> dict:
+        """Every tunable, as the run used it. `breath_state`: the run's breath model ("on" or "off …"); where the
+        model ran, FinalPass's speech-loud rule was off (its confirmation replaces it)."""
+        state = breath_state if breath_state is not None else ("on" if self.breath_model else "off")
+        breaths = self.breaths.as_dict()
+        if state == "on":
+            breaths["speech_loud_rule"] = "off where the breath model ran"
+        return {"breaths": breaths, "breath_severity": self.breath_severity.as_dict(),
+                "breath_model": self.breath_confirm.as_dict() if state == "on" else state,
                 "hum": self.hum.as_dict(), "noise": self.noise.as_dict(),
                 "dropouts": self.dropouts.as_dict(), "plosives": self.plosives.as_dict(),
-                "clicks": self.clicks.as_dict(), "ticks": self.ticks.as_dict(),
+                "clicks": self.clicks.as_dict(), "ticks": self.ticks.as_dict(), "pauses": pause_tunables(),
                 "truncation": self.truncation_tunables.as_dict() if self.truncation else "off"}
 
 
@@ -82,14 +89,33 @@ def _file_event(ch: Chapter, start: int, end: int, problem: str, **measures) -> 
                    end_time=ch.clock(end), severity=3, problem=problem, measures=measures)
 
 
+INVALID_GAP_S = 1.0                      # invalid samples this far apart are separate stretches
+MAX_INVALID_EVENTS = 20
+
+
+def _invalid_events(ch: Chapter) -> list[Finding]:
+    """One event per stretch of invalid samples (closer than INVALID_GAP_S joined), so a few bad samples at both ends
+    of a file are not shown as one event over the whole file; past MAX_INVALID_EVENTS the rest share one event."""
+    bad = ch.invalid_samples
+    cuts = np.flatnonzero(np.diff(bad) > int(INVALID_GAP_S * ch.sr)) + 1
+    runs = np.split(bad, cuts)
+    if len(runs) > MAX_INVALID_EVENTS:
+        runs = runs[:MAX_INVALID_EVENTS - 1] + [np.concatenate(runs[MAX_INVALID_EVENTS - 1:])]
+    out = []
+    for r in runs:
+        a, b = int(r[0]), int(r[-1])
+        out.append(_file_event(ch, a, b + 1, f"file contains {r.size} invalid (NaN, Inf or out-of-range) "
+                                             f"sample{'' if r.size == 1 else 's'} — corrupt audio",
+                               invalid_samples=int(r.size)))
+    return out
+
+
 def _file_findings(ch: Chapter, header_log: str) -> list[Finding]:
     """Whole-file problems, each severity 3: corrupt samples, a file cut short, no narration, too short."""
     out, n = [], len(ch.x)
     if ch.invalid_samples.size:
         a, b = int(ch.invalid_samples[0]), int(ch.invalid_samples[-1])
-        out.append(_file_event(ch, a, b + 1, f"file contains {ch.invalid_samples.size} invalid (NaN, Inf or "
-                                             "out-of-range) samples — corrupt audio",
-                               invalid_samples=int(ch.invalid_samples.size)))
+        out += _invalid_events(ch)
     m = _DATA_SIZE.search(header_log)
     frame = int(b.group(1)) if (b := _BLOCK_ALIGN.search(header_log)) else 1
     # short by at least one whole frame (less loses no audio); 0xFFFFFFFF / 0x7FFFFFFF: a header that
@@ -118,7 +144,9 @@ def _clear_of_invalid(findings: list[Finding], ch: Chapter, pad_s: float = 0.005
 
 
 def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None,
-                 breath_model=None) -> FileResult:
+                 breath_model=None, breath_state: str | None = None) -> FileResult:
+    """One file's findings. `breath_model`: the loaded breath model or None; `breath_state`: why there is none
+    ("off", "off (model not installed)", …), shown in the reports."""
     say = stage or (lambda name: None)
     say("loading")
     ch = Chapter.load(path)
@@ -128,14 +156,25 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     say("breaths")
     rise = rise_db(ch.x, ch.sr, opts.clicks)
     confirm = None
-    if breath_model is not None and ch.sr >= MIN_BREATH_RATE:
-        confirm = breath_model.probs(to_16k(ch.x, ch.sr))
+    # "on" only where the model really ran on this file; otherwise the run's reason, or plain "off"
+    state = breath_state if breath_state not in (None, "on") else "off"
+    if breath_model is not None:
+        if ch.sr < MIN_BREATH_RATE:
+            state = f"off (not run: {ch.sr / 1000:g} kHz audio)"
+        else:
+            try:
+                confirm = breath_model.probs(to_16k(ch.x, ch.sr))
+                state = "on"
+            except Exception as exc:        # the model is a refinement: a failure costs the file its confirmation only
+                state = f"off (failed on this file: {type(exc).__name__}: {exc})"
+                notes.append(f"breath model failed on this file, breaths listed without it: {type(exc).__name__}: {exc}")
     # with the model, its confirmation replaces FinalPass's "as loud as speech" rule, which there only loses short
     # loud breaths the model keeps (it rejects every consonant the rule removes)
     breath_tunables = replace(opts.breaths, speech_loud_rule=False) if confirm is not None else opts.breaths
     breath_list, quiet_breaths, breaths = breath_findings(ch, breath_tunables, opts.breath_severity, rise,
                                                           confirm, opts.breath_confirm)
-    if ch.sr < MIN_BREATH_RATE:              # breath features need the band above 5 kHz: room tone reads as breath
+    breath_check = ch.sr >= MIN_BREATH_RATE
+    if not breath_check:                     # breath features need the band above 5 kHz: room tone reads as breath
         breath_list, quiet_breaths = [], []
         notes.append(f"breath check skipped: {ch.sr / 1000:g} kHz audio (needs {MIN_BREATH_RATE / 1000:g} kHz or more)")
     findings += breath_list
@@ -148,7 +187,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     say("noise")
     tones = [([float(h.measures["frequency_hz"])]
               + [float(v) for k in ("harmonics_hz", "pause_lines_hz") for v in str(h.measures.get(k, "")).split(",") if v],
-              h.start_sample / ch.sr, h.end_sample / ch.sr) for h in hums]
+              h.start_sample / ch.sr, h.end_sample / ch.sr, float(h.measures["level_dbfs"])) for h in hums]
     noise_list, floor = noise_findings(ch, opts.noise, exclude=tones)
     findings += noise_list
     say("dropouts")
@@ -159,8 +198,16 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     else:
         dropouts = dropout_findings(ch, opts.dropouts)
     findings += dropouts
+    if opts.plosives.high_band_hz[1] >= ch.sr / 2:
+        notes.append(f"plosive check skipped: {ch.sr / 1000:g} kHz audio (needs more than "
+                     f"{2 * opts.plosives.high_band_hz[1] / 1000:g} kHz)")
+    if opts.ticks.above_hz >= 0.95 * ch.sr / 2:
+        notes.append(f"digital-tick check skipped: {ch.sr / 1000:g} kHz audio (needs more than "
+                     f"{2 * opts.ticks.above_hz / 0.95 / 1000:.1f} kHz)")
     say("plosives")
-    spans = act.breath_spans + tuple((e.start_sample, e.end_sample) for e in breaths.breaths)
+    # what FinalPass calls a breath keeps clicks out of it — unless the breath check is skipped (below 16 kHz, where
+    # room tone reads as breath)
+    spans = act.breath_spans + (tuple((e.start_sample, e.end_sample) for e in breaths.breaths) if breath_check else ())
     mouth_clicks = tuple((f.start_sample, f.end_sample) for f in breath_list if f.measures.get("mouth_click") == "yes")
     findings += plosive_findings(ch, mouth_clicks, opts.plosives)
     say("clicks")
@@ -181,7 +228,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
                      if all(abs(f.start_sample - k.start_sample) > near for k in ticks)]
     findings = _clear_of_invalid(findings, ch)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
-    counts = {"breaths": breaths.counts.breaths,
+    counts = {"breaths": (len(breath_list) + len(quiet_breaths)) if breath_check else 0,
+              "breaths_detected": len(breaths.breaths),
               "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
               "breaths_listed": len(breath_list), "quiet_breaths": len(quiet_breaths), "pauses": len(act.pauses),
               "breaths_not_confirmed": (len(breaths.breaths) - len(breath_list) - len(quiet_breaths)
@@ -195,7 +243,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         audio_format=audio_format, channels=ch.audio.channel_count,
         narration_dbfs=round(ch.narration_dbfs, 2) if ch.narration_dbfs == ch.narration_dbfs else None,
         noise_floor_dbfs=round(floor, 1) if floor is not None else None,
-        findings=findings, informational=sorted(quiet_breaths, key=lambda f: f.start_sample), pauses=pauses, truncation_candidates=records, counts=counts,
+        findings=findings, informational=sorted(quiet_breaths, key=lambda f: f.start_sample), pauses=pauses,
+        truncation_candidates=records, counts=counts, breath_model=state,
         notes=ch.notes + [n for n in breaths.notes if n not in ch.notes] + notes,
     )
 
@@ -203,12 +252,11 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
 def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
         stage: Callable[[int, str], None] | None = None,
         file_done: Callable[[int, FileResult], None] | None = None,
-        model_loaded: Callable[[bool, str], None] | None = None,
-        breath_model_loaded: Callable[[bool, str], None] | None = None) -> RunReport:
+        model_loaded: Callable[[bool, str], None] | None = None) -> RunReport:
     """Check every file. `progress(i, n, path)` before each file, `stage(i, name)` as each check
-    starts (i = -1 while the model loads), `file_done(i, result)` as each file finishes, and
-    `model_loaded(ok, why)` / `breath_model_loaded(ok, why)` once each, before the first file, when the
-    chopped-word check / the breath model is on."""
+    starts (i = -1 while the models load), `file_done(i, result)` as each file finishes, and
+    `model_loaded(ok, why)` once, before the first file, when the chopped-word check is on. Whether the breath
+    model ran is in every file's result (`breath_model`)."""
     started = datetime.now(timezone.utc).replace(microsecond=0)
     run_id = started.strftime("%Y-%m-%dT%H-%M-%SZ") + "-" + secrets.token_hex(3)
     notes: list[str] = []
@@ -226,22 +274,22 @@ def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
                 why = str(exc).removeprefix(f"{weights_path()}: ")      # the reason, without the long path
             if model_loaded:
                 model_loaded(model is not None, why)
-        bmodel = None
+        bmodel, bstate = None, "off"
         if opts.breath_model:
-            why = ""
             try:
                 bmodel = breath_weights.load()
+                bstate = "on"
             except ModelError as exc:
                 notes.append(f"breath model off: {exc}")
                 why = str(exc).removeprefix(f"{breath_weights.weights_path()}: ")
-            if breath_model_loaded:
-                breath_model_loaded(bmodel is not None, why)
+                bstate = ("off (model not installed)" if not breath_weights.installed()
+                          else f"off (model could not be loaded: {why})")
         for i, path in enumerate(paths):
             if progress:
                 progress(i, len(paths), path)
             try:
                 files.append(analyze_file(path, opts, model, (lambda name, i=i: stage(i, name)) if stage else None,
-                                          bmodel))
+                                          bmodel, bstate))
             except Exception as exc:        # one bad file is skipped with a note, never the whole batch
                 why = str(exc) if isinstance(exc, (FinalPassError, ChapterError)) else f"{type(exc).__name__}: {exc}"
                 files.append(FileResult(file=path.name, path=str(path), sample_rate=0, duration_seconds=0.0,
@@ -251,4 +299,4 @@ def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
                 file_done(i, files[-1])
     return RunReport(version=__version__, finalpass_version=finalpass.__version__, run_id=run_id,
                      run_started_at=started.isoformat().replace("+00:00", "Z"), rules=opts.rules.name,
-                     tunables=opts.tunables(), network_attempts=len(guard.attempts), files=files, notes=notes)
+                     tunables=opts.tunables(bstate), network_attempts=len(guard.attempts), files=files, notes=notes)

@@ -97,7 +97,7 @@ def test_every_file_is_analysed_inside_the_guard(tmp_path, monkeypatch) -> None:
     """A check that reached for the network is refused, counted in the report, and only its file is skipped."""
     from finalpass_audiobook import run as run_mod
 
-    def phone_home(path, opts, model=None, stage=None, breath_model=None):  # noqa: ANN001, ANN202
+    def phone_home(path, opts, model=None, stage=None, breath_model=None, breath_state=None):  # noqa: ANN001, ANN202
         socket.getaddrinfo("localhost", 80)
 
     monkeypatch.setattr(run_mod, "analyze_file", phone_home)

@@ -16,7 +16,10 @@ hums are low-level and hardly noticeable, 1; a strong hum (its loudest line at
 least -55 dBFS) is 2; strong and starting or cutting off abruptly, 3. The two
 hums the operator called strong measured -53.8 and -54.3 dBFS; the loudest of
 the rest -55.5. Graded on the whole-dB level the text shows, so "-55 dBFS" always
-reads as strong; a hum that builds, on the level it reaches.
+reads as strong; a hum that builds, on the level it reaches. The loudest line
+may be a harmonic ("-50 dBFS at 180 Hz"): as heard in the pauses, or tracked when
+there is no pause to hear it in (a weak 60 Hz under strong 180/300 Hz lines read
+-70 dBFS, severity 1).
 
 A tracked line must also be heard in the pauses. On one title's 12 chapters,
 tracking alone found 8 lines; the operator auditioned all 8 and only one was hum
@@ -35,7 +38,11 @@ price: a quieter hum under narration with no pause >= 0.4 s nearby is not listed
 
 Harmonics: once a hum is found, every whole multiple of its frequency is
 measured over the same windows and reported if it stands at least 6 dB over its
-neighbourhood (median over the hum).
+neighbourhood (median over the hum). A tracked line is a harmonic only within
+0.6 Hz (or 0.02 Hz per multiple) of a whole multiple and sounding mostly while
+the hum does; a line in the pauses within 1 Hz (or 0.05 Hz per multiple). The 1 %
+once used let an unrelated 987 Hz hum pass as 41 Hz x 24, and any overlap let a
+later hum at a multiple, starting during another, vanish into it.
 
 Heard in the pauses (PLAN §3.3). Speech hides lines in the voice's range. So every
 hum is also described from its pauses (stretches >= 0.4 s at least 30 dB under
@@ -57,6 +64,21 @@ are not worth a finding; without a floor, inaudible lines far below it were
 listed). On one title's 12 chapters this found 11 hums; the operator auditioned
 all 11 and all were real.
 
+A hum in the voice's range loud enough to sit less than 30 dB under the voice
+fills every pause, and speech at its pitch keeps it from being tracked (or breaks
+its track into pieces). So a pause is also a gap at least 15 dB under the voice
+that the hum fills: flat (its 50 ms level within 3 dB, 10th-90th percentile),
+carried by one steady line (within 6 dB of the gap's level), and alike — the same
+line (±0.5 Hz, ±3 dB) in another such gap within 10 s. A soft held voiced sound
+can be flat and one line — on one title's 12 chapters 4 gaps at the narrator's
+own pitch were — but none had a twin, and the 12 chapters list exactly what they
+did before. A tracked line whose pauses carry it beyond its track (pauses wholly
+outside it, by more than 2 s) is described from those pauses, as a hidden hum is.
+Synthetic 100-300 Hz hums at -47 and -40 dBFS under narration, once missed or
+split into pieces, are each one hum at their level. The limit: such a hum's start
+or cut under a word, where the voice fills its band, is placed between the pauses
+either side, and may go unnamed.
+
 Leakage: with a very clean background, the analysis window's own sidelobes
 beside a strong hum (±1-3 Hz, 30-45 dB down) look like lines; a line 25 dB or
 more under a louder one within ±10 Hz is dropped as leakage.
@@ -65,8 +87,10 @@ Abrupt start or end: the 2 s windows overlap, so a hard cut looks like a slope
 there. Instead the tone's own level is followed in 0.1 s steps through a narrow
 band (±3 Hz); a change of 20 dB or more within 0.5 s at either end, from or to
 the hum's full level (within 6 dB of its median), is reported ("cuts off
-abruptly", "starts abruptly"). A fade does not qualify: its last 20 dB happen
-well below full level. Heard blind on one title's 24 hum edges: 6 of the 8
+abruptly", "starts abruptly"); the level above full level (a word passing through
+the band) does not count toward the step (a 100 Hz hum running to the end of a
+file read "cuts off abruptly" from a word's fall). A fade does not qualify: its
+last 20 dB happen well below full level. Heard blind on one title's 24 hum edges: 6 of the 8
 claimed abrupt were, 2 of the other 16 were abrupt too (7 could not be judged).
 """
 from __future__ import annotations
@@ -108,11 +132,16 @@ class HumTunables:
     edge_full_level_db: float = 6.0    # the step must leave from (or arrive at) the hum's full level
     # --- the hum as heard in the pauses (PLAN §3.3) ---
     pause_below_narration_db: float = 30.0
+    filled_flat_db: float = 3.0        # a pause a loud hum fills: a gap (gap_below_narration_db under the voice)
+                                       # this flat (10th-90th percentile of its 50 ms level) that one steady line
+                                       # carries (within gap_over_hum_db of the gap's level), and another such gap
+    filled_match_db: float = 3.0       # within pause_hum_max_gap_s carries it too (pause_hum_tol_hz, this close)
     pause_min_s: float = 0.4
     pause_trim_s: float = 0.05         # keep word tails and breaths out of the pause spectrum
     pause_line_prominence_db: float = 12.0
     pause_line_within_db: float = 30.0 # a pause line counts toward a hum if within this of its level
     pause_line_tol_hz: float = 1.0
+    pause_harmonic_tol_hz: float = 0.05   # per multiple: how far a pause line may sit from n x the hum's tone
     headline_within_db: float = 6.0    # a line this close to the hum's level is named in the headline
     word_cut_fall_db: float = 10.0     # a cut that lands on a word: this fall within word_cut_within_s,
     word_cut_within_s: float = 0.2
@@ -258,7 +287,10 @@ def _drop_sidelobes(tracks: list[_Track], t: HumTunables) -> list[_Track]:
     return [tr for tr in tracks if not masked(tr)]
 
 
-def _group(tracks: list[_Track]) -> list[tuple[_Track, list[_Track]]]:
+def _group(tracks: list[_Track], t: HumTunables = HumTunables()) -> list[tuple[_Track, list[_Track]]]:
+    """Harmonics with their fundamental: a whole multiple within the tracking tolerance (or the per-multiple
+    drift), sounding mostly while it does (a 1 % match let a 987 Hz hum pass as 41 Hz x 24; any overlap let
+    a later hum that only began during another vanish into it)."""
     groups: list[tuple[_Track, list[_Track]]] = []
     for tr in sorted(tracks, key=lambda z: float(np.median(z.freqs))):
         f = float(np.median(tr.freqs))
@@ -266,7 +298,8 @@ def _group(tracks: list[_Track]) -> list[tuple[_Track, list[_Track]]]:
             f0 = float(np.median(base.freqs))
             n = round(f / f0)
             overlap = min(tr.last, base.last) - max(tr.first, base.first)
-            if n >= 2 and abs(f - n * f0) <= 0.01 * f and overlap > 0:
+            if (n >= 2 and abs(f - n * f0) <= max(t.freq_tolerance_hz, n * t.harmonic_tolerance_hz)
+                    and overlap > 0 and overlap >= 0.5 * (tr.last - tr.first)):
                 harmonics.append(tr)
                 break
         else:
@@ -317,35 +350,64 @@ def _abrupt_edges(y: np.ndarray, fs: float, t: HumTunables, f0: float,
     t_blk = a / fs + (np.arange(k) + 0.5) * n / fs
     inside = (t_blk >= start_s + t.window_s / 2) & (t_blk <= end_s - t.window_s / 2)
     full = float(np.median(env[inside])) if inside.any() else float(np.max(env))
-    change = env[s:] - env[:-s]                     # rise from block i to block i + s
+    capped = np.minimum(env, full)      # the step is to or from full level: a voice harmonic passing through
+    up = capped[s:] - env[:-s]          # the band above it is not the hum's (rise from block i to i + s)
+    down = capped[:-s] - env[s:]
     at = t_blk[:-s]
     near_start = (np.abs(at - start_s) <= t.window_s) & (env[s:] >= full - t.edge_full_level_db)
     near_end = (np.abs(at - (end_s - t.window_s / 2)) <= t.window_s) & (env[:-s] >= full - t.edge_full_level_db)
-    rise = float(change[near_start].max()) if near_start.any() else 0.0
-    drop = float(-change[near_end].min()) if near_end.any() else 0.0
+    rise = float(up[near_start].max()) if near_start.any() else 0.0
+    drop = float(down[near_end].max()) if near_end.any() else 0.0
     return rise, drop
 
 
 PAUSE_WINDOW_BINS = 50                 # 50 one-millisecond bins
 
 
-def _quiet_runs(ch: Chapter, t: HumTunables, limit: float, from_s: float = 0.0,
+def _quiet_runs(ch: Chapter, t: HumTunables, limit: float | np.ndarray, from_s: float = 0.0,
                 to_s: float | None = None) -> list[tuple[float, float]]:
-    """Stretches (seconds) of at least pause_min_s where the full-band 50 ms level is <= limit."""
+    """Stretches (seconds) of at least pause_min_s where the full-band 50 ms level is <= limit (one
+    value, or one per bin)."""
     win = PAUSE_WINDOW_BINS
     ms = ch.bin_samples / ch.sr
     a = max(0, int(from_s / ms))
     b = len(ch.bin_energy) if to_s is None else max(a, int(to_s / ms))
-    quiet = ch.envelope_db(win)[a:b] <= limit
+    quiet = ch.envelope_db(win)[a:b] <= (limit[a:b] if isinstance(limit, np.ndarray) else limit)
     d = np.diff(np.concatenate(([0], quiet.astype(np.int8), [0])))
     starts, ends = np.flatnonzero(d == 1) + a, np.flatnonzero(d == -1) + a + win - 1
     return [(s * ms, min(e * ms, ch.duration_s)) for s, e in zip(starts, ends) if (e - s) * ms >= t.pause_min_s]
 
 
 def _pauses(ch: Chapter, t: HumTunables) -> list[tuple[float, float]]:
-    """Quiet stretches (seconds): full-band 50 ms level at least 30 dB under the narration."""
+    """Quiet stretches (seconds): full-band 50 ms level at least 30 dB under the narration — and the
+    pauses a hum loud enough to sit less than 30 dB under the voice fills: gaps at least 15 dB under it,
+    flat, carried by one steady line, and alike — the same line at the same level in another such gap
+    within 10 s. A soft held voiced sound can be flat and one line (on one title's 12 chapters, 4 gaps
+    at the narrator's own pitch were), but not twice at one frequency and level."""
     narration = ch.narration_dbfs
-    return _quiet_runs(ch, t, narration - t.pause_below_narration_db if np.isfinite(narration) else -50.0)
+    if not np.isfinite(narration):
+        return _quiet_runs(ch, t, -50.0)
+    quiet = _quiet_runs(ch, t, narration - t.pause_below_narration_db)
+    y, fs = ch.low
+    env = ch.envelope_db(PAUSE_WINDOW_BINS)
+    ms = ch.bin_samples / ch.sr
+    filled: list[tuple[float, float, float, float]] = []      # gap, and the line that carries it
+    for a, b in _quiet_runs(ch, t, narration - t.gap_below_narration_db):
+        if any(qa < b and qb > a for qa, qb in quiet):
+            continue                                # a real pause in it already
+        seg = env[int((a + t.pause_trim_s) / ms):int((b - t.pause_trim_s) / ms) - PAUSE_WINDOW_BINS]
+        if seg.size < int(0.2 / ms) or np.subtract(*np.percentile(seg, [90, 10])) > t.filled_flat_db:
+            continue
+        level = float(10 * np.log10(np.mean(10 ** (seg / 10))))
+        lines = [(f, lv) for f, lv in _pause_lines(y, fs, a, b, t) if lv >= level - t.gap_over_hum_db]
+        if lines:
+            f, lv = max(lines, key=lambda z: z[1])
+            filled.append((a, b, f, lv))
+    alike = [(a, b) for i, (a, b, f, lv) in enumerate(filled)
+             if any(j != i and (b2 <= a and a - b2 <= t.pause_hum_max_gap_s or a2 >= b and a2 - b <= t.pause_hum_max_gap_s)
+                    and abs(f2 - f) <= t.pause_hum_tol_hz and abs(lv2 - lv) <= t.filled_match_db
+                    for j, (a2, b2, f2, lv2) in enumerate(filled))]
+    return sorted(quiet + alike)
 
 
 def _filled_gaps(ch: Chapter, t: HumTunables, start_s: float, end_s: float, level: float) -> list[tuple[float, float]]:
@@ -394,9 +456,11 @@ def _cluster(per_pause: list[list[tuple[float, float]]], tol: float) -> list[tup
              sorted({g[2] for g in grp})) for grp in groups]
 
 
-def _is_multiple(f: float, of: float) -> bool:
+def _is_multiple(f: float, of: float, t: HumTunables = HumTunables()) -> bool:
+    """A whole multiple, for lines measured in short pauses: within pause_line_tol_hz, or the per-multiple
+    drift of a pause-measured fundamental (1 % let an unrelated 987 Hz line pass as 41 Hz x 24)."""
     n = round(f / of)
-    return n >= 2 and abs(f - n * of) <= max(1.0, 0.01 * f)
+    return n >= 2 and abs(f - n * of) <= max(t.pause_line_tol_hz, n * t.pause_harmonic_tol_hz)
 
 
 def _level_at(y: np.ndarray, fs: float, a_s: float, b_s: float, f0: float, t: HumTunables) -> float | None:
@@ -461,11 +525,13 @@ def _describe(y: np.ndarray, fs: float, t: HumTunables, f0: float, level: float,
     found = [(f, lv) for f, lv, idx in _cluster(per_pause, t.pause_line_tol_hz) if len(idx) >= max(1, need)]
     base_lv = next((lv for f, lv in found if abs(f - f0) <= t.pause_line_tol_hz), level)
     heads, harm, other = [(f0, base_lv)], set(harmonics), []
+    heard: dict[int, float] = {}                 # harmonics' levels as heard in the pauses
     for f, lv in sorted(found, key=lambda z: -z[1]):
         if any(abs(f - h) <= t.pause_line_tol_hz for h, _ in heads):
             continue
-        if any(_is_multiple(f, h) for h, _ in heads):
+        if any(_is_multiple(f, h, t) for h, _ in heads):
             harm.add(int(round(f)))
+            heard[int(round(f))] = max(lv, heard.get(int(round(f)), lv))
         elif lv >= base_lv - t.headline_within_db:
             heads.append((f, lv))
         else:
@@ -476,8 +542,11 @@ def _describe(y: np.ndarray, fs: float, t: HumTunables, f0: float, level: float,
         if not merged or h - merged[-1] > max(1, round(0.005 * h)):
             merged.append(h)
     harm = set(merged)
-    return {"heads": heads, "harmonics": sorted(harm), "other": sorted(other), "pauses": len(inside),
-            "lines": sorted(found)}
+    reach = lambda h: max(1, round(0.005 * h))  # noqa: E731  (as merged above)
+    levels = {h: max(lv for g, lv in heard.items() if abs(g - h) <= reach(h)) for h in harm
+              if any(abs(g - h) <= reach(h) for g in heard)}
+    return {"heads": heads, "harmonics": sorted(harm), "harmonic_levels": levels, "other": sorted(other),
+            "pauses": len(inside), "lines": sorted(found)}
 
 
 def _cut_between_pauses(y: np.ndarray, fs: float, t: HumTunables, f0: float, full_db: float,
@@ -532,9 +601,15 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
              end_s: float, pauses: list[tuple[float, float]], rising: tuple[float, float] | None,
              harmonics: set[int],
              measures: dict, heard_in_pauses_only: bool = False,
-             all_pauses: list[tuple[float, float]] | None = None) -> Finding:
+             all_pauses: list[tuple[float, float]] | None = None,
+             tracked_levels: dict[int, float] | None = None) -> Finding:
     d = _describe(y, fs, t, f0, level, start_s, end_s, pauses, harmonics)
     heads = d["heads"]
+    # A harmonic louder than the tone itself sets the level (operator: a strong hum is one whose loudest
+    # line reaches -55 dBFS). Heard in the pauses; the tracked level only with no pause to hear it in
+    # (under speech a tracked level in the voice's range reads high).
+    harm_lv = d["harmonic_levels"] if d["pauses"] else {h: lv for h, lv in (tracked_levels or {}).items()
+                                                        if h in d["harmonics"]}
     rise = drop = 0.0
     cut_start = cut_end = False
     if heard_in_pauses_only and all_pauses is not None and pauses:
@@ -560,10 +635,14 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
     # Graded on the level the text shows (whole dB), so "-55 dBFS" always reads as strong. A hum that
     # builds is shown and graded at the level it reaches (its pauses mostly hear it on the way up).
     text = "hum " + " + ".join(f"{f:.1f}" for f, _ in heads) + " Hz"
-    loudest = max([lv for _, lv in heads] + ([rising[1]] if rising else []))
+    tone_lv = max([lv for _, lv in heads] + ([rising[1]] if rising else []))
+    top = max(harm_lv.items(), key=lambda z: z[1], default=None)
+    by_harmonic = top is not None and top[1] > tone_lv
+    loudest = top[1] if by_harmonic else tone_lv
     shown = int(round(loudest))
     severity = hum_severity(shown, cut_start or cut_end, t)
-    parts = [text, f"building {rising[0]:.0f} → {shown} dBFS" if rising is not None and len(heads) == 1
+    parts = [text, f"{shown} dBFS at {top[0]} Hz" if by_harmonic
+             else f"building {rising[0]:.0f} → {shown} dBFS" if rising is not None and len(heads) == 1
              else f"{shown} dBFS"]
     parts += [w for w, on in (("starts abruptly", cut_start), ("cuts off abruptly", cut_end)) if on]
     s, e = int(start_s * ch.sr), int(end_s * ch.sr)
@@ -571,6 +650,7 @@ def _finding(ch: Chapter, t: HumTunables, y: np.ndarray, fs: float, f0: float, l
         file=ch.name, check="hum", start_sample=s, end_sample=e, start_time=ch.clock(s), end_time=ch.clock(e),
         severity=severity, problem=", ".join(parts),
         measures={"level_dbfs": round(loudest, 1), **measures, "duration_s": round(end_s - start_s, 1),
+                  "loudest_line_hz": top[0] if by_harmonic else round(max(heads, key=lambda z: z[1])[0], 1),
                   "harmonics_hz": ",".join(str(h) for h in d["harmonics"]),
                   "other_lines_hz": ",".join(str(round(f)) for f, _ in d["other"]),
                   "heard": "in the pauses only (speech covers it)" if heard_in_pauses_only else "throughout",
@@ -607,11 +687,13 @@ def _hidden_hums(y: np.ndarray, fs: float, t: HumTunables, pauses: list[tuple[fl
             a_s, b_s = pauses[run[0]][0], pauses[run[-1]][1]
             if len(run) < t.pause_hum_min_pauses or b_s - a_s < t.pause_hum_min_span_s:
                 continue
-            same = lambda g: abs(f - g) <= t.pause_line_tol_hz or _is_multiple(f, g)  # noqa: E731
-            # A known hum's own tone (or a multiple) overlapping it in time is that hum: a pause run
-            # covers whole pauses, so it can run past the hum's end. Its other listed lines only
+            same = lambda g: abs(f - g) <= t.pause_line_tol_hz or _is_multiple(f, g, t)  # noqa: E731
+            # A known hum's own tone overlapping it in time is that hum: a pause run covers whole
+            # pauses, so it can run past the hum's end. A multiple of it only while mostly within it
+            # (a later hum at a multiple, starting during it, is its own); its other listed lines only
             # when the run lies within the hum.
-            if any((_overlaps(a_s, b_s, ks, ke, t.window_s) and same(lines[0]))
+            if any((_overlaps(a_s, b_s, ks, ke, t.window_s) and abs(f - lines[0]) <= t.pause_line_tol_hz)
+                   or (_mostly_within(a_s, b_s, ks, ke) and _is_multiple(f, lines[0], t))
                    or (_within(a_s, b_s, ks, ke, t.window_s) and any(same(g) for g in lines))
                    for ks, ke, lines in known):
                 continue
@@ -650,6 +732,11 @@ def _within(start_s: float, end_s: float, ks: float, ke: float, slack: float) ->
     return ks - slack <= start_s and end_s <= ke + slack
 
 
+def _mostly_within(start_s: float, end_s: float, ks: float, ke: float) -> bool:
+    """At least half of [start_s, end_s] lies within [ks, ke]."""
+    return min(end_s, ke) - max(start_s, ks) >= 0.5 * (end_s - start_s)
+
+
 def _overlaps(start_s: float, end_s: float, ks: float, ke: float, slack: float) -> bool:
     """A pause run's span covers whole pauses, so it can run past the hum it belongs to."""
     return start_s < ke + slack and end_s > ks - slack
@@ -665,6 +752,41 @@ def _heard_in_pauses(y: np.ndarray, fs: float, t: HumTunables, f0: float, start_
                for a, b in near for f, lv in _pause_lines(y, fs, a, b, t))
 
 
+def _carrying_pauses(y: np.ndarray, fs: float, t: HumTunables, f0: float, start_s: float, end_s: float,
+                     pauses: list[tuple[float, float]]) -> list[tuple[tuple[float, float], float]]:
+    """The run of pauses that carry a tracked line at its level (within gap_over_hum_db of its median in
+    the pauses in or next to it): outwards from those, while each next pause within pause_hum_max_gap_s
+    carries it too. (pause, line level dBFS) in time order; empty if no pause near it carries it."""
+    found: dict[int, float | None] = {}
+
+    def level(i: int) -> float | None:
+        if i not in found:
+            found[i] = next((lv for f, lv in _pause_lines(y, fs, *pauses[i], t)
+                             if abs(f - f0) <= t.pause_line_tol_hz), None)
+        return found[i]
+
+    near = [i for i, p in enumerate(pauses)
+            if p[1] > start_s - t.confirm_margin_s and p[0] < end_s + t.confirm_margin_s]
+    ref = [lv for i in near if (lv := level(i)) is not None]
+    if not ref:
+        return []
+    ref_lv = float(np.median(ref))
+
+    def carries(i: int) -> bool:
+        lv = level(i)
+        return lv is not None and abs(lv - ref_lv) <= t.gap_over_hum_db
+
+    held = [i for i in near if carries(i)]
+    if not held:
+        return []
+    lo, hi = held[0], held[-1]
+    while lo > 0 and pauses[lo][0] - pauses[lo - 1][1] <= t.pause_hum_max_gap_s and carries(lo - 1):
+        lo -= 1
+    while hi < len(pauses) - 1 and pauses[hi + 1][0] - pauses[hi][1] <= t.pause_hum_max_gap_s and carries(hi + 1):
+        hi += 1
+    return [(pauses[i], lv) for i in range(lo, hi + 1) if carries(i) and (lv := level(i)) is not None]
+
+
 def hum_findings(ch: Chapter, t: HumTunables = HumTunables()) -> list[Finding]:
     y, fs = ch.low
     pauses = _pauses(ch, t)
@@ -673,7 +795,7 @@ def hum_findings(ch: Chapter, t: HumTunables = HumTunables()) -> list[Finding]:
     out: list[Finding] = []
     known: list[tuple[float, float, list[float]]] = []
     hop_s = _hop_s(fs, t)
-    for base, harmonics in _group(_drop_sidelobes(_tracks(y, fs, t), t)):
+    for base, harmonics in _group(_drop_sidelobes(_tracks(y, fs, t), t), t):
         f0 = float(np.median(base.freqs))
         start_s = max(0.0, base.first * hop_s)
         end_s = min(ch.duration_s, base.last * hop_s + t.window_s)
@@ -693,13 +815,30 @@ def hum_findings(ch: Chapter, t: HumTunables = HumTunables()) -> list[Finding]:
             heard = bool(gaps) and _heard_in_pauses(y, fs, t, f0, start_s, end_s, gaps, at_level=level)
         if t.confirm_in_pauses and not heard:
             continue                  # steady only inside the speech windows: not a hum (operator's audition)
+        tracked = {int(round(float(np.median(h.freqs)))): float(np.median(h.levels)) for h in harmonics}
+        harm = set(tracked) | set(_measured_harmonics(y, fs, t, base, f0))
+        carrying = _carrying_pauses(y, fs, t, f0, start_s, end_s, pauses) if t.pause_hums else []
+        if any(p[1] < start_s - t.confirm_margin_s or p[0] > end_s + t.confirm_margin_s for p, _ in carrying):
+            # Pauses wholly outside its track carry it: speech broke the track (a hum in the voice's range,
+            # about as loud as the voice there). Those pauses describe it whole, as for a hidden hum. (One
+            # long pause the hum ends in is not outside it.)
+            pl = float(np.median([lv for _, lv in carrying]))
+            if pl >= t.pause_hum_min_dbfs:
+                a_s, b_s = carrying[0][0][0], carrying[-1][0][1]
+                f = _finding(ch, t, y, fs, f0, pl, a_s, b_s, [p for p, _ in carrying], None, harm,
+                             {"frequency_hz": round(f0, 2), "level_max_dbfs": round(pl, 1),
+                              "pauses_with_line": len(carrying), "found_by": "pauses"},
+                             heard_in_pauses_only=True, all_pauses=pauses)
+                out.append(f)
+                known.append((f.start_sample / ch.sr, f.end_sample / ch.sr,
+                              [f0] + [float(v) for v in f.measures["pause_lines_hz"].split(",") if v]))
+                continue
         rising = (lv0, lv1) if lv1 - lv0 >= t.rise_db else None
-        harm = ({int(round(float(np.median(h.freqs)))) for h in harmonics}
-                | set(_measured_harmonics(y, fs, t, base, f0)))
         f = _finding(ch, t, y, fs, f0, level, start_s, end_s, pauses, rising, harm,
                      {"frequency_hz": round(f0, 2), "level_start_dbfs": round(lv0, 1),
                       "level_end_dbfs": round(lv1, 1), "level_max_dbfs": round(float(max(base.levels)), 1),
-                      "prominence_db": round(float(np.median(base.proms)), 1), "found_by": "tracking"})
+                      "prominence_db": round(float(np.median(base.proms)), 1), "found_by": "tracking"},
+                     tracked_levels=tracked)
         out.append(f)
         lines = [f0] + [float(v) for v in f.measures["pause_lines_hz"].split(",") if v]
         known.append((start_s, end_s, lines))

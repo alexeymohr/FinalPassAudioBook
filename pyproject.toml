@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "finalpass-audiobook"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local, offline QC for AI-narrated audiobook chapters."
 readme = "README.md"
 license = "MIT AND Apache-2.0"   # fpab is MIT; the vendored model code keeps its Apache-2.0
-license-files = ["LICENSE", "src/finalpass_audiobook/vendor/speech_truncation/LICENSE"]
+license-files = ["LICENSE", "src/finalpass_audiobook/vendor/speech_truncation/LICENSE", "src/finalpass_audiobook/vendor/respiro/LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     # Shared audio I/O, clock times and the breath check. Pinned to a commit.
@@ -51,3 +51,4 @@ packages = ["src/finalpass_audiobook"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["real_models: uses the model weights installed on this machine (skipped where there are none)"]
