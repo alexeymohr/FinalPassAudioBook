@@ -92,6 +92,35 @@ text rounds, as for hum and plosive).
   closer than 16.8 dB; the test voice's 12 loud ones all come within 12.8 dB. The rule
   also removes 3 of 1,717 unlabelled detections on 15 chapters of the calibration
   title and 12 of 331 on five chapters of the second title.
+- **Every breath is confirmed by a local breath model** (milestone 3). On other voices
+  the loudness rule is not enough: on the second title most "breaths" graded 2–3 were
+  a consonant left alone at a word's end before a pause ("t", "k", "p", "ch", "s"),
+  which no spectral or loudness line separates from breaths across voices. The model is
+  Respiro-en (Yang, Koriyama & Saito, Interspeech 2024; MIT): a frame-wise breath
+  detector (Conformer + BiLSTM, 2.9 M parameters, one probability per 10 ms of 16 kHz
+  audio) trained on read audiobook speech with every frame inside an aligned word as
+  "not breath". Its published weights missed most of the calibration title's loud
+  breaths, so they were fine-tuned (the paper's recipe) on the operator's labelled
+  breaths of that title plus the published model's confident verdicts on half of the
+  second title; only the weights ship — no audio, labels or names, and nothing in them
+  can give back the audio they were trained on.
+  - Rule: a breath FinalPass finds is listed (as a problem or as a quiet breath) only if
+    the model says breath (≥ 0.5) for at least 100 ms inside it. A mouth-click inhale is
+    a breath, so its click is listed only with a confirmed breath after it. With the
+    model, FinalPass's "as loud as speech" rule (above) is switched off: the model
+    rejects all 33 tagged consonants that rule removes and keeps the two short loud
+    breaths it wrongly drops. Without the model that rule stays.
+  - Evidence, on tagged events never used to train or choose the model: breaths kept
+    18/18 (calibration title) and 16/16 (second title); consonants listed 5/28 (second
+    title; 4 of them "breathy", which the operator is content to see), 0/14 on the breathless
+    test voice; mouth-click inhales kept 43/43 labelled + 8/8 heard; five of the second
+    title's seven false mouth-click inhales (a word-final "p" held 80–125 ms, inaudible
+    clicks) removed. At ≥ 150 ms one breath would be lost.
+  - Run like the chopped-word model: our numpy port (`breath_np.py`), tested against the
+    vendored, unmodified torch code; 16 kHz input in 30 s windows (the middle 20 s kept);
+    weights installed only by `fpab setup-model` (size and SHA-256 checked); analysis
+    under the network guard. Without the model the breaths are listed as before and every
+    report says "breath model: off".
 
 ### 3.2 Word ends abruptly at a clip end (local model)
 

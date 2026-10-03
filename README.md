@@ -16,8 +16,8 @@ network and process routes it knows of and records the count, which must be 0
 
 | check | severity | status |
 |---|---|---|
-| Mouth-click inhale (a breath that opens with a click, after a pause since the word) | 3 when the click is loud (narration −20 dB or more), else 2 | calibrated on one title's operator labels; 32 of 32 held-out listings confirmed by ear |
-| Breath (every breath, by its loudness against the narration; a sound as loud as speech, such as an "s", "sh" or "ch" left alone before a pause, is not a breath) | quiet ones informational; 1 / 2 / 3 from −31.6 / −26.4 / −22.5 dB | a fixed scale set on one title's breaths (its 35th / 75th / 95th percentiles); no labelled breath comes within 15 dB of the narration, every sibilant heard on a breathless test voice does |
+| Mouth-click inhale (a breath that opens with a click, after a pause since the word) | 3 when the click is loud (narration −20 dB or more), else 2 | calibrated on one title's operator labels; 32 of 32 held-out listings confirmed by ear; with the breath model, 43 of 43 labelled ones kept and five of a second voice's seven false ones gone |
+| Breath (every breath, by its loudness against the narration), confirmed by a local breath model so a consonant left alone at a word's end ("t", "k", "p", "ch", "s") is not listed | quiet ones informational; 1 / 2 / 3 from −31.6 / −26.4 / −22.5 dB | a fixed scale set on one title's breaths (its 35th / 75th / 95th percentiles); on tagged events never used to build the model: breaths kept 18 of 18 and 16 of 16 on two titles, consonants listed 5 of 28 (4 of them breathy), 0 of 14 on a breathless test voice |
 | Plosive pop (a low thump below 100 Hz on its own, just before a word) | 1 / 2 / 3 from −42 / −34 / −26 dBFS | 10 of one title's 12 QC-noted pops; held out, 29 of 32 listings were plosives by ear |
 | Click in the silence (between words, and in the room tone before the first word and after the last; 100 ms clear of words and breaths) | 3 | on one title's 12 chapters, the 2 ticks confirmed by ear and nothing else; a second title must confirm it |
 | Digital tick (a spike above 16.5 kHz, a few samples long, standing alone) | 3 | a guard: none on a whole title; 40 of 40 planted spikes in pauses found |
@@ -35,7 +35,9 @@ per-file CSVs (`--csv-per-file`, and the app) list them apart from the problems.
 `--min-sev 2` lists only severity 2 and 3 in `issues.*`; the per-file CSVs and
 `report.json` always keep everything.
 
-Breath analysis comes from [FinalPass](https://github.com/alexeymohr/FinalPass).
+Breath analysis comes from [FinalPass](https://github.com/alexeymohr/FinalPass); each breath it finds is then
+confirmed by the breath model (below). Without the model, breaths are listed as FinalPass finds them, minus sounds as
+loud as speech, and every report says "breath model: off".
 
 ## Use
 
@@ -43,8 +45,8 @@ Needs [uv](https://docs.astral.sh/uv/) (it fetches Python 3.12 if needed) and gi
 Runs on macOS, Windows and Linux: the test suite runs on all three on every push.
 
 ```
-uv sync                         # every check, including the chopped-word model
-uv run fpab setup-model         # once: fetch and verify the model weights
+uv sync                         # every check, including both local models
+uv run fpab setup-model         # once: fetch and verify both models' weights
 uv run fpab check path/to/chapters/ --out report/
 ```
 
@@ -58,7 +60,9 @@ events, then the informational events; `--with-pauses` adds the pause map. A
 per-file CSV never replaces an existing file, not even an earlier report: a new one
 gets `<name> (2).csv`, `(3)`, …. (The run report in `--out` is the one exception: the
 next run replaces its own files there.) `fpab check --help` lists every option.
-Without the model installed, the chopped-word check is skipped with a note. It exits
+Without a model installed, its check is skipped (the chopped-word check) or runs
+without it (the breath model), with a note; `--no-breath-model` and `--no-truncation`
+switch them off. It exits
 1 when a file was skipped or a report could not be written, and 2 when nothing could
 be checked (no audio found, an unusable `--out`); with `--progress jsonl`, which the
 app uses, it exits 0 once the run completes and reports problems per file.
@@ -69,14 +73,23 @@ CSVs builds from [macos/](macos/README.md).
 
 Tests use synthetic audio only: `uv run pytest`.
 
-The model is [`mythicinfinity/speech-truncation-detection-12M`](https://huggingface.co/mythicinfinity/speech-truncation-detection-12M)
-(Apache-2.0). It runs as our numpy port of its inference (no PyTorch); the
-upstream torch code is vendored unmodified at a pinned revision as the reference
-the port is tested against (`uv sync --extra truncation` installs PyTorch for
-those tests; runs never need it). The weights are verified against a recorded
-SHA-256 on every load and read without pickle or remote code.
+Two local models, both run as our numpy ports (no PyTorch), their upstream torch
+code vendored unmodified at a pinned revision as the reference the ports are tested
+against; the weights are verified against a recorded SHA-256 on every load and read
+without pickle or remote code:
+
+- The chopped-word model is [`mythicinfinity/speech-truncation-detection-12M`](https://huggingface.co/mythicinfinity/speech-truncation-detection-12M)
+  (Apache-2.0); `uv sync --extra truncation` installs PyTorch for its reference tests
+  (runs never need it).
+- The breath model is [Respiro-en](https://github.com/ydqmkkx/Respiro-en) (Yang,
+  Koriyama & Saito, Interspeech 2024; MIT), a frame-wise breath detector, with its
+  weights fine-tuned for narration breaths and published as this repository's
+  `breath-model-v2` release (weights only: no audio, labels or names). How they were
+  made and judged: [docs/PLAN.md](docs/PLAN.md) §3.1 and
+  `src/finalpass_audiobook/vendor/respiro/PROVENANCE.md`.
 
 Plan and calibration notes: [docs/PLAN.md](docs/PLAN.md).
 
-License: MIT. The vendored model code keeps its Apache-2.0 licence
-(`src/finalpass_audiobook/vendor/speech_truncation/LICENSE`).
+License: MIT. The vendored model code keeps its own licence (Apache-2.0,
+`src/finalpass_audiobook/vendor/speech_truncation/LICENSE`; MIT,
+`src/finalpass_audiobook/vendor/respiro/LICENSE`).

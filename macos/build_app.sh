@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build "FinalPass AudioBook.app": the SwiftUI window plus the engine it runs — a self-contained
-# Python with fpab and its locked base dependencies (the chopped-word model runs as numpy; no
-# PyTorch), and the verified model weights. The app is sandboxed with NO network entitlement.
+# Python with fpab and its locked base dependencies (both local models run as numpy; no
+# PyTorch), and both models' verified weights. The app is sandboxed with NO network entitlement.
 #
 #   macos/build_app.sh               -> macos/build/FinalPass AudioBook.app, ad-hoc signed (this Mac only)
 #   macos/build_app.sh --sign "Developer ID Application: NAME (TEAM)"
@@ -9,7 +9,7 @@
 #                                       runtime; then macos/release.sh notarizes it and makes the DMG
 #   macos/build_app.sh --test-hooks  -> plus the FPAB_AUTORUN hook for scripted checks (never released)
 #
-# Needs: this repo's .venv (for the interpreter), uv, and the model installed by `fpab setup-model`.
+# Needs: this repo's .venv (for the interpreter), uv, and both models installed by `fpab setup-model`.
 # Everything is assembled in a staging folder and moved into place only once it is signed and
 # checked, so a failed build never leaves a half-built (or unsandboxed) app behind.
 set -euo pipefail
@@ -39,6 +39,7 @@ STAGE="$(mktemp -d "$OUT/.stage.XXXXXX")"
 APP="$STAGE/FinalPass AudioBook.app"
 ENGINE="$APP/Contents/Resources/engine"
 MODEL_SRC="${FPAB_MODEL_DIR:-$HOME/.cache/finalpass-audiobook}/speech-truncation-12M"
+BREATH_SRC="${FPAB_MODEL_DIR:-$HOME/.cache/finalpass-audiobook}/breath-respiro"
 LOG="$STAGE/build.log"
 trap 'rm -rf "$STAGE"' EXIT
 
@@ -49,6 +50,7 @@ EXCLUDE_NEWER="$(sed -n 's/^exclude-newer = "\(.*\)"/\1/p' "$REPO/pyproject.toml
 VERSION="$(sed -n '/^\[project\]/,/^\[/s/^version = "\(.*\)"/\1/p' "$REPO/pyproject.toml" | head -1)"
 [ -f "$REPO/.venv/pyvenv.cfg" ] || die "no .venv in $REPO: run 'uv sync' first"
 [ -d "$MODEL_SRC" ] || die "model not installed ($MODEL_SRC): run 'fpab setup-model' first"
+[ -d "$BREATH_SRC" ] || die "breath model not installed ($BREATH_SRC): run 'fpab setup-model' first"
 [ -n "$EXCLUDE_NEWER" ] || die "no [tool.uv] exclude-newer in pyproject.toml"
 [ -n "$VERSION" ] || die "no [project] version in pyproject.toml"
 if [ "$SIGN_ID" != "-" ]; then
@@ -141,6 +143,11 @@ WEIGHTS_REL="$("$REPO/.venv/bin/python" -I -c "from finalpass_audiobook import m
 mkdir -p "$(dirname "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL")"
 cp "$MODEL_SRC/$WEIGHTS_REL" "$ENGINE/model/speech-truncation-12M/$WEIGHTS_REL"
 FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "from finalpass_audiobook import model; model.load(); print('weights verified')"
+BREATH_REL="$("$REPO/.venv/bin/python" -I -c "from finalpass_audiobook import breath_model as b; print(b.WEIGHTS_SHA256[:12] + '/' + b.FILENAME)")"
+[ -f "$BREATH_SRC/$BREATH_REL" ] || die "breath model not installed ($BREATH_SRC/$BREATH_REL): run 'fpab setup-model' first"
+mkdir -p "$(dirname "$ENGINE/model/breath-respiro/$BREATH_REL")"
+cp "$BREATH_SRC/$BREATH_REL" "$ENGINE/model/breath-respiro/$BREATH_REL"
+FPAB_MODEL_DIR="$ENGINE/model" "$PY" -I -c "from finalpass_audiobook import breath_model; breath_model.load(); print('breath model weights verified')"
 
 say "Trim what an analysis run never uses"
 LIB="$ENGINE/python/lib"
@@ -264,6 +271,10 @@ vendor = site / "finalpass_audiobook" / "vendor" / "speech_truncation"
 take(vendor / "LICENSE", out / "speech-truncation-detection-12M" / "LICENSE")
 take(vendor / "PROVENANCE.md", out / "speech-truncation-detection-12M" / "PROVENANCE.md")
 rows.append("mythicinfinity/speech-truncation-detection-12M (model weights and reference code): Apache-2.0")
+respiro = site / "finalpass_audiobook" / "vendor" / "respiro"
+take(respiro / "LICENSE", out / "Respiro-en" / "LICENSE")
+take(respiro / "PROVENANCE.md", out / "Respiro-en" / "PROVENANCE.md")
+rows.append("Respiro-en (breath model reference code; the weights are fine-tuned from its published ones): MIT")
 (out / "README.txt").write_text(
     f"FinalPass AudioBook {version} contains the following software, each under its own licence.\n"
     "The full texts are in the folders beside this file.\n\n" + "\n".join(rows) + "\n", encoding="utf-8")

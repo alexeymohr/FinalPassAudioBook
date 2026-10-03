@@ -33,6 +33,7 @@
 *.ckpt
 *.npy
 *.npz
+!tests/fixtures/breath_np.npz
 *.zip
 *.dmg
 # Reports carry client file names: never commit them.

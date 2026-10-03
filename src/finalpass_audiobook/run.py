@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,8 +15,10 @@ from finalpass.errors import FinalPassError
 
 from . import __version__
 from .activity import measure
+from . import breath_model as breath_weights
+from .breath_np import to_16k
 from .chapter import Chapter, ChapterError
-from .checks.breaths import BreathSeverity, breath_findings
+from .checks.breaths import BreathConfirm, BreathSeverity, breath_findings
 from .checks.clicks import ClickTunables, click_findings, rise_db
 from .checks.ticks import TickTunables, tick_findings
 from .checks.dropouts import DropoutTunables, dropout_findings
@@ -37,6 +39,8 @@ STAGES = ("loading", "breaths", "pauses", "hum", "noise", "dropouts", "plosives"
 class RunOptions:
     rules: RuleSet = RULE_SETS["standard"]
     truncation: bool = True
+    breath_model: bool = True
+    breath_confirm: BreathConfirm = field(default_factory=BreathConfirm)
     breaths: BreathTunables = field(default_factory=BreathTunables)
     breath_severity: BreathSeverity = field(default_factory=BreathSeverity)
     hum: HumTunables = field(default_factory=HumTunables)
@@ -49,6 +53,7 @@ class RunOptions:
 
     def tunables(self) -> dict:
         return {"breaths": self.breaths.as_dict(), "breath_severity": self.breath_severity.as_dict(),
+                "breath_model": self.breath_confirm.as_dict() if self.breath_model else "off",
                 "hum": self.hum.as_dict(), "noise": self.noise.as_dict(),
                 "dropouts": self.dropouts.as_dict(), "plosives": self.plosives.as_dict(),
                 "clicks": self.clicks.as_dict(), "ticks": self.ticks.as_dict(),
@@ -112,7 +117,8 @@ def _clear_of_invalid(findings: list[Finding], ch: Chapter, pad_s: float = 0.005
     return [f for f in findings if f.check not in SHORT_EVENTS or not near(f)]
 
 
-def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None) -> FileResult:
+def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str], None] | None = None,
+                 breath_model=None) -> FileResult:
     say = stage or (lambda name: None)
     say("loading")
     ch = Chapter.load(path)
@@ -121,7 +127,14 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     notes: list[str] = []
     say("breaths")
     rise = rise_db(ch.x, ch.sr, opts.clicks)
-    breath_list, quiet_breaths, breaths = breath_findings(ch, opts.breaths, opts.breath_severity, rise)
+    confirm = None
+    if breath_model is not None and ch.sr >= MIN_BREATH_RATE:
+        confirm = breath_model.probs(to_16k(ch.x, ch.sr))
+    # with the model, its confirmation replaces FinalPass's "as loud as speech" rule, which there only loses short
+    # loud breaths the model keeps (it rejects every consonant the rule removes)
+    breath_tunables = replace(opts.breaths, speech_loud_rule=False) if confirm is not None else opts.breaths
+    breath_list, quiet_breaths, breaths = breath_findings(ch, breath_tunables, opts.breath_severity, rise,
+                                                          confirm, opts.breath_confirm)
     if ch.sr < MIN_BREATH_RATE:              # breath features need the band above 5 kHz: room tone reads as breath
         breath_list, quiet_breaths = [], []
         notes.append(f"breath check skipped: {ch.sr / 1000:g} kHz audio (needs {MIN_BREATH_RATE / 1000:g} kHz or more)")
@@ -171,6 +184,8 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     counts = {"breaths": breaths.counts.breaths,
               "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
               "breaths_listed": len(breath_list), "quiet_breaths": len(quiet_breaths), "pauses": len(act.pauses),
+              "breaths_not_confirmed": (len(breaths.breaths) - len(breath_list) - len(quiet_breaths)
+                                        if confirm is not None else 0),
               "phrase_ends_scored": len(records)}
     for f in findings:
         counts[f"{f.check}_findings"] = counts.get(f"{f.check}_findings", 0) + 1
@@ -188,10 +203,12 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
 def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
         stage: Callable[[int, str], None] | None = None,
         file_done: Callable[[int, FileResult], None] | None = None,
-        model_loaded: Callable[[bool, str], None] | None = None) -> RunReport:
+        model_loaded: Callable[[bool, str], None] | None = None,
+        breath_model_loaded: Callable[[bool, str], None] | None = None) -> RunReport:
     """Check every file. `progress(i, n, path)` before each file, `stage(i, name)` as each check
     starts (i = -1 while the model loads), `file_done(i, result)` as each file finishes, and
-    `model_loaded(ok, why)` once, before the first file, when the chopped-word check is on."""
+    `model_loaded(ok, why)` / `breath_model_loaded(ok, why)` once each, before the first file, when the
+    chopped-word check / the breath model is on."""
     started = datetime.now(timezone.utc).replace(microsecond=0)
     run_id = started.strftime("%Y-%m-%dT%H-%M-%SZ") + "-" + secrets.token_hex(3)
     notes: list[str] = []
@@ -209,11 +226,22 @@ def run(paths: list[Path], opts: RunOptions = RunOptions(), progress=None,
                 why = str(exc).removeprefix(f"{weights_path()}: ")      # the reason, without the long path
             if model_loaded:
                 model_loaded(model is not None, why)
+        bmodel = None
+        if opts.breath_model:
+            why = ""
+            try:
+                bmodel = breath_weights.load()
+            except ModelError as exc:
+                notes.append(f"breath model off: {exc}")
+                why = str(exc).removeprefix(f"{breath_weights.weights_path()}: ")
+            if breath_model_loaded:
+                breath_model_loaded(bmodel is not None, why)
         for i, path in enumerate(paths):
             if progress:
                 progress(i, len(paths), path)
             try:
-                files.append(analyze_file(path, opts, model, (lambda name, i=i: stage(i, name)) if stage else None))
+                files.append(analyze_file(path, opts, model, (lambda name, i=i: stage(i, name)) if stage else None,
+                                          bmodel))
             except Exception as exc:        # one bad file is skipped with a note, never the whole batch
                 why = str(exc) if isinstance(exc, (FinalPassError, ChapterError)) else f"{type(exc).__name__}: {exc}"
                 files.append(FileResult(file=path.name, path=str(path), sample_rate=0, duration_seconds=0.0,

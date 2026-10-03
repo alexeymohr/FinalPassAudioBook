@@ -120,6 +120,8 @@ def _usable_out_dir(out_dir: Path) -> str | None:
 @click.option("--min-sev", "min_sev", type=click.IntRange(1, 3), default=1, show_default=True,
               help="List findings of this severity and above in issues.txt/csv (3 worst). report.json keeps all.")
 @click.option("--no-truncation", is_flag=True, help="Skip the truncated-word model.")
+@click.option("--no-breath-model", is_flag=True,
+              help="List breaths without the breath model's confirmation (consonants may be listed as breaths).")
 @click.option("--csv-per-file", is_flag=True, help="Write one CSV per WAV (<name>.csv) with every finding.")
 @click.option("--csv-dir", type=click.Path(file_okay=False, path_type=Path), default=None,
               help="Put the per-file CSVs here instead of beside each WAV (implies --csv-per-file).")
@@ -127,10 +129,12 @@ def _usable_out_dir(out_dir: Path) -> str | None:
 @click.option("--progress", "progress_mode", type=click.Choice(["text", "jsonl"]), default="text", show_default=True,
               help="jsonl: one JSON object per line on stdout (for the macOS app); messages go to stderr.")
 def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, min_sev: int, no_truncation: bool,
-              csv_per_file: bool, csv_dir: Path | None, with_pauses: bool, progress_mode: str) -> None:
+              no_breath_model: bool, csv_per_file: bool, csv_dir: Path | None, with_pauses: bool,
+              progress_mode: str) -> None:
     """Check chapter files (or folders of them) and write the issue list and pause map."""
     import json
 
+    from . import breath_model
     from .model import installed
     from .output import RUN_FILES, _real, csv_name, file_csv, name_key, run_report_clashes, tally, write
     from .run import STAGES, RunOptions, run
@@ -148,7 +152,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     reserved = tuple(out_dir / n for n in RUN_FILES) if out_dir is not None else ()
     targets = _csv_targets(files, csv_dir, reserved) if per_file else []
     planned = {name_key(_real(p)) for p in (*reserved, *targets) if isinstance(p, Path)}
-    opts = RunOptions(rules=RULE_SETS[rules_name], truncation=not no_truncation)
+    opts = RunOptions(rules=RULE_SETS[rules_name], truncation=not no_truncation, breath_model=not no_breath_model)
     jsonl = progress_mode == "jsonl"
     say = err if jsonl else out
 
@@ -161,6 +165,7 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
     from . import __version__
     csv_context = {"version": __version__, "rules": rules_name,
                    "chopped-word check": "off" if not opts.truncation else "off (model not installed)",
+                   "breath model": "off" if not opts.breath_model else "off (model not installed)",
                    "analysed": datetime.now().strftime("%Y-%m-%d %H:%M")}
     failed_csv: list[int] = []
 
@@ -170,6 +175,11 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                 "off (model not installed)" if not installed() else f"off (model could not be loaded: {why})")
         if not ok and "chopped words" in stages:        # the progress no longer counts a step that never comes
             stages.remove("chopped words")
+
+    def breath_model_loaded(ok: bool, why: str = "") -> None:
+        if opts.breath_model:
+            csv_context["breath model"] = "on" if ok else (
+                "off (model not installed)" if not breath_model.installed() else f"off (model could not be loaded: {why})")
 
     def file_done(i: int, fr) -> None:
         csv_path = None
@@ -201,11 +211,11 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
                      stage=lambda i, name: emit(event="stage", index=i, stage=name,
                                                 step=stages.index(name) if name in stages else -1,
                                                 steps=len(stages)),
-                     file_done=file_done, model_loaded=model_loaded)
+                     file_done=file_done, model_loaded=model_loaded, breath_model_loaded=breath_model_loaded)
     else:
         with err.status("Checking...") as status:
             report = run(files, opts, progress=lambda i, n, p: status.update(f"Checking {i + 1}/{n}: {p.name}"),
-                         file_done=file_done, model_loaded=model_loaded)
+                         file_done=file_done, model_loaded=model_loaded, breath_model_loaded=breath_model_loaded)
     written, report_error = [], None
     if out_dir is not None and (clash := run_report_clashes(out_dir)):          # appeared during the run
         report_error = (f"did not write the run report: {out_dir} now holds "
@@ -235,17 +245,26 @@ def check_cmd(paths: tuple[Path, ...], rules_name: str, out_dir: Path | None, mi
 
 @main.command("setup-model")
 @click.option("--from-file", "from_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
-              help="Install an already-downloaded model.safetensors instead of downloading.")
-def setup_model_cmd(from_file: Path | None) -> None:
-    """Install the truncated-word model's weights (verified against the audited SHA-256)."""
-    from .model import ModelError, WEIGHTS_URL, download, install_from_file
+              help="Install an already-downloaded truncated-word model.safetensors instead of downloading it.")
+@click.option("--breath-from-file", "breath_from_file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="Install an already-downloaded breath model (respiro-en-fpab-v2.safetensors) instead of downloading it.")
+def setup_model_cmd(from_file: Path | None, breath_from_file: Path | None) -> None:
+    """Install both models' weights: the truncated-word model and the breath model (each verified against its
+    recorded size and SHA-256)."""
+    from . import breath_model, model
 
-    try:
-        dest = install_from_file(from_file) if from_file else download()
-    except (ModelError, OSError) as exc:
-        err.print(f"[red]error:[/red] {exc}")
+    failed = False
+    for name, mod, src in (("truncated-word model", model, from_file), ("breath model", breath_model, breath_from_file)):
+        try:
+            dest = mod.install_from_file(src) if src else mod.download()
+        except (model.ModelError, OSError) as exc:
+            err.print(f"[red]error:[/red] {name}: {exc}", soft_wrap=True)
+            failed = True
+            continue
+        out.print(escape(f"Installed and verified the {name}: {dest}" + ("" if src else f" (from {mod.WEIGHTS_URL})")),
+                  soft_wrap=True)
+    if failed:
         sys.exit(2)
-    out.print(f"Installed and verified {dest}" + ("" if from_file else f"\n(from {WEIGHTS_URL})"))
 
 
 @main.command("rules")

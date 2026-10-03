@@ -269,7 +269,7 @@ def summary_rows(fr: FileResult, pauses: int | None, context: dict | None = None
         rows.append(["breaths", c["breaths"], f"{c.get('breaths_listed', 0)} problems",
                      f"{c.get('mouth_click_inhales', 0)} mouth-click inhales", f"{c.get('quiet_breaths', 0)} quiet"])
     rows += [["narration level", _level(fr.narration_dbfs)], ["noise floor", _level(fr.noise_floor_dbfs)]]
-    rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "analysed") if context.get(k)]
+    rows += [[k, _cell(context[k])] for k in ("rules", "chopped-word check", "breath model", "analysed") if context.get(k)]
     if fr.notes:
         rows.append(["notes", "", "", _cell("; ".join(fr.notes))])
     return rows

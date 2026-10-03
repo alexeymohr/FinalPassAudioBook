@@ -36,6 +36,14 @@ very-minor/noticeable boundary), 75th and 95th percentiles, about 73 quiet /
 68 / 38 / 9 breaths per chapter; on a second title, whose breaths sit about
 10 dB lower, about 61 / 2 / 1 / 3. A breath that is also a mouth-click inhale is
 one finding at the higher severity.
+
+With the breath model (breath_np), a breath is listed — as a problem or as a quiet breath — only if the model says
+breath (>= 0.5) for at least 100 ms inside it; a mouth-click inhale is a breath, so its click needs that confirmed
+breath too. On voices other than the calibration title's, FinalPass's detector also finds a consonant left alone
+at a word's end before a pause ("t", "k", "p", "ch", "s"); the model, trained with words as "not breath", tells
+them apart. Held-out evidence: breaths kept 18/18 and 16/16 on two titles, consonants listed 5/28 (4 of them
+"breathy"), 0/14 on a breathless test voice; mouth-click inhales kept 43/43 + 8/8; at 150 ms one breath would
+be lost (docs/PLAN.md 3.1).
 """
 from __future__ import annotations
 
@@ -67,6 +75,22 @@ class BreathSeverity:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class BreathConfirm:
+    probability: float = 0.5             # the breath model says breath from this probability...
+    min_ms: float = 100.0                # ...for at least this long inside the breath
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def confirmed_ms(confirm: np.ndarray, sr: int, start: int, end: int, rule: BreathConfirm = BreathConfirm()) -> int:
+    """How long (ms) the breath model says breath inside samples start..end (its frames are 10 ms, frame i at i*10 ms)."""
+    a = int(round(start / sr * 100))
+    b = max(a + 1, int(round(end / sr * 100)))
+    return 10 * int(np.count_nonzero(confirm[a:b] >= rule.probability))
 
 
 def mouth_click_severity(silence_ms: float, click_rel_db: float, s: BreathSeverity = BreathSeverity()) -> int:
@@ -132,21 +156,30 @@ def click_level(ch: Chapter, click: int) -> float:
 
 def breath_findings(ch: Chapter, tunables: BreathTunables = BreathTunables(),
                     sev: BreathSeverity = BreathSeverity(), rise: tuple[np.ndarray, int, int] | None = None,
+                    confirm: np.ndarray | None = None, rule: BreathConfirm = BreathConfirm(),
                     ) -> tuple[list[Finding], list[Finding], BreathAssetResult]:
     """Every breath: (problem findings, quiet breaths as informational events, FinalPass's result).
-    `rise`: the click detector's per-frame rise (clicks.rise_db), if already computed."""
+    `rise`: the click detector's per-frame rise (clicks.rise_db), if already computed. `confirm`: the breath model's
+    probability per 10 ms (breath_np), or None to list FinalPass's breaths as they are."""
     result = analyze_breaths(ch.mono_audio, tunables)
     r, n, hop = rise if rise is not None else rise_db(ch.x, ch.sr, ClickTunables())
     narration_ok = bool(np.isfinite(ch.narration_dbfs))
     problems: list[Finding] = []
     quiet_breaths: list[Finding] = []
     for e in result.breaths:
+        held = None
+        if confirm is not None:
+            held = confirmed_ms(confirm, ch.sr, e.start_sample, e.end_sample, rule)
+            if held < rule.min_ms:
+                continue                     # the model hears no breath here: a consonant, or nothing
         parts: list[tuple[int, str]] = []
         start = e.start_sample
         loudness = round(float(e.noticeability_db), 1)        # graded on the value the report shows
         loud = breath_loudness_severity(loudness, sev)
         measures: dict = {"loudness_db": loudness, "duration_ms": e.duration_ms,
                           "peak_db_vs_narration": e.peak_db, "mouth_click": "no"}
+        if held is not None:
+            measures["breath_model_ms"] = held
         if narration_ok and r.size:
             at, sharp = _click_near(r, n, hop, ch.sr, e.start_sample, sev)
             if e.t_inhale or sharp >= sev.click_min_rise_db:

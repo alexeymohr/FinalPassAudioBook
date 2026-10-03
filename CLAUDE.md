@@ -41,6 +41,14 @@ This repository is public (MIT). Never commit book titles, ISBNs, project or
 order IDs, file names of client deliverables, or anything derived from client
 audio. Local evaluation data lives under `resources/` (gitignored).
 
+One exception (operator's decision, 2026-10-02): a model may be trained on client
+audio and its weights published, as long as the audio itself is not present and
+could never be recovered from what ships. Ship weights only — no audio, clips,
+features, labels, manifests, file names or titles, and nothing in the file's
+metadata — and only for a model whose outputs cannot reconstruct audio (the breath
+model: one probability per 10 ms). Its training data and scripts stay in
+`resources/`.
+
 ## Models and dependencies
 
 - Nothing installs a package version published less than 7 days ago (check the

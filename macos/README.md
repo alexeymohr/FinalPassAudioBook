@@ -6,9 +6,10 @@ then the informational events; a checkbox adds the pause map's rows.
 
 - **Sandboxed, no network.** App Sandbox is on and the app has no network entitlement,
   so macOS itself refuses every connection. The analysis engine (Python with fpab, its
-  locked dependencies and the verified model weights) is bundled inside the app and
+  locked dependencies and both models' verified weights) is bundled inside the app and
   runs within the same sandbox. It can read only the files you give it. The
-  chopped-word model runs as numpy (no PyTorch), held to the audited torch code.
+  chopped-word model and the breath model run as numpy (no PyTorch), held to their
+  audited torch code.
 - **Where CSVs go.** Next to each WAV as `<name>.csv` (macOS lets a sandboxed app
   create a same-name file beside one it was given), or into a folder you choose once.
   An existing file is never replaced, not even this app's own earlier report: a new
@@ -24,7 +25,7 @@ Composer app icon) and a uv-managed Python 3.12 (the script refuses any other).
 
 ```
 uv sync --managed-python        # the repo's environment
-uv run fpab setup-model         # the model weights, verified
+uv run fpab setup-model         # both models' weights, verified
 macos/build_app.sh              # -> macos/build/FinalPass AudioBook.app (about 180 MB)
 ```
 
