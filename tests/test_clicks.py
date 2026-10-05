@@ -117,3 +117,34 @@ def test_a_click_right_before_the_first_word_is_left_to_the_word() -> None:
     ch = chapter(x)
     act = measure(ch)
     assert click_findings(ch, act.pauses, [], first_sound=act.first_sound, last_sound=act.last_sound) == []
+
+
+def test_severity_follows_the_clicks_height_over_the_room_tone_floor() -> None:
+    """Operator (0.2.1 prove-out): the clicks heard as low stood 23-29 dB over their room tone, those left at 3
+    stood 36 dB or more over it. The floor, not the sound beside the click."""
+    x, _ = _with(_tick(-35.0), 700)
+    ch = chapter(x)
+    pauses = measure(ch).pauses
+    (quiet_room,) = click_findings(ch, pauses, [], floor_dbfs=-75.0)
+    (loud_room,) = click_findings(ch, pauses, [], floor_dbfs=-62.0)
+    (no_floor,) = click_findings(ch, pauses, [], floor_dbfs=None)
+    assert quiet_room.severity == 3 and quiet_room.measures["over_floor_db"] == pytest.approx(40.0, abs=0.6)
+    assert loud_room.severity == 2 and loud_room.measures["over_floor_db"] == pytest.approx(27.0, abs=0.6)
+    assert no_floor.severity == 3 and no_floor.measures["over_floor_db"] == "n/a"
+
+
+@pytest.mark.parametrize("room_dbfs, severity", [(-75.0, 3), (-60.0, 2)])
+def test_the_run_grades_a_click_on_the_files_own_room_tone(tmp_path, room_dbfs: float, severity: int) -> None:  # noqa: ANN001
+    import soundfile as sf
+    from finalpass_audiobook.run import RunOptions, analyze_file
+    p = phrase(4)
+    x = np.concatenate([p, np.zeros(int(1.5 * SR)), phrase(4), np.zeros(int(0.7 * SR)), phrase(3), np.zeros(SR)])
+    x = x + room(len(x) / SR, room_dbfs)[:len(x)]                    # the room under everything, as in a real room
+    at = len(p) + int(0.7 * SR)
+    x[at:at + int(0.003 * SR)] += _tick(-35.0)
+    path = tmp_path / "c.wav"
+    sf.write(str(path), x, SR, subtype="PCM_24")
+    fr = analyze_file(path, RunOptions(truncation=False))
+    (click,) = [f for f in fr.findings if f.check == "clicks"]
+    assert click.severity == severity
+    assert click.measures["over_floor_db"] == pytest.approx(click.measures["peak_dbfs"] - fr.noise_floor_dbfs, abs=0.15)

@@ -211,7 +211,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     mouth_clicks = tuple((f.start_sample, f.end_sample) for f in breath_list if f.measures.get("mouth_click") == "yes")
     findings += plosive_findings(ch, mouth_clicks, opts.plosives)
     say("clicks")
-    clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise, act.first_sound, act.last_sound)
+    clicks = click_findings(ch, act.pauses, spans, opts.clicks, rise, act.first_sound, act.last_sound, floor)
     say("ticks")
     near = int(0.003 * ch.sr)
     # The step into and out of a dropout is the dropout's own edge, not a separate tick; a digital

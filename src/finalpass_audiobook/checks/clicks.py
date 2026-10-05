@@ -18,6 +18,15 @@ operator heard 64 candidates from looser rules and confirmed 2 ticks; this rule
 lists exactly those 2 and nothing else in the 12 chapters. The limits were set on
 the same chapters, so they need a second title to confirm them.
 
+Severity 2 when the click's peak stands less than 30 dB over the file's room-tone
+floor (the noise check's floor: the quietest level the file holds, not the sound
+next to the click — a click right after a loud word can still be loud, a faint one
+in a pause faint). In the 0.2.1 prove-out the operator confirmed all 15 clicks heard;
+the 5 heard as "low, 1 or 2" stood 23.2-28.6 dB over their floor (a second title,
+room tone at -68 dBFS), those left at 3 stood 36.3-49.6 dB over it, one at 26.0.
+Peak level alone did not separate them (the same -42 dBFS is clear over the first
+title's -81 dBFS room and low over the second's), nor did peak over the narration.
+
 The same rule covers the room tone before the first word and after the last one
 (operator: as audible there as between words), where only the word side needs the
 100 ms clearance.
@@ -48,6 +57,7 @@ class ClickTunables:
     min_peak_dbfs: float = -45.0
     clear_ms: float = 100.0            # from words and breaths, both sides
     one_per_ms: float = 20.0           # one click per this long
+    sev3_over_floor_db: float = 30.0   # peak this far over the room-tone floor: 3; less: 2
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -98,10 +108,12 @@ def rise_db(x: np.ndarray, sr: int, t: ClickTunables = ClickTunables()) -> tuple
 
 def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTunables(),
                    rise: tuple[np.ndarray, int, int] | None = None,
-                   first_sound: int | None = None, last_sound: int | None = None) -> list[Finding]:
+                   first_sound: int | None = None, last_sound: int | None = None,
+                   floor_dbfs: float | None = None) -> list[Finding]:
     """Clicks in the silence: inside pauses (word to word), and in the room tone before the first
     word and after the last one (`first_sound`, `last_sound`), clear of words and breaths.
-    `rise`: rise_db(), if computed."""
+    `rise`: rise_db(), if computed. `floor_dbfs`: the file's room-tone floor (the noise check's);
+    without one every click is severity 3."""
     # (start, end, a word on the left, a word on the right, text)
     regions = [(a, b, True, True, "click in a pause") for a, b in pauses]
     if first_sound is not None and last_sound is not None:
@@ -135,10 +147,13 @@ def click_findings(ch: Chapter, pauses, breath_spans, t: ClickTunables = ClickTu
         if peak < t.min_peak_dbfs:
             continue
         at = max(0, s - k2) + int(np.argmax(np.abs(seg)))
+        over = peak - floor_dbfs if floor_dbfs is not None and np.isfinite(floor_dbfs) else None
+        severity = CLICK_SEVERITY if over is None or over >= t.sev3_over_floor_db else 2
         out.append(Finding(
             file=ch.name, check="clicks", start_sample=at, end_sample=at + 1, start_time=ch.clock(at),
-            end_time=ch.clock(at + 1), severity=CLICK_SEVERITY, problem=text,
+            end_time=ch.clock(at + 1), severity=severity, problem=text,
             measures={"peak_dbfs": round(peak, 1), "rise_db": round(float(rise[f]), 1),
+                      "over_floor_db": round(over, 1) if over is not None else "n/a",
                       "ms_after_word": round((s - a) * 1000 / sr) if word_left else "",
                       "ms_before_word": round((b - s) * 1000 / sr) if word_right else ""},
         ))

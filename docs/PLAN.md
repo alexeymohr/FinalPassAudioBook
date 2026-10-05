@@ -234,7 +234,10 @@ there).
 
 ### 3.7 Click in a pause
 
-A tick or click in the silence between words, severity 3. Inside speech a click is
+A tick or click in the silence between words, severity 3 — 2 when its peak stands less than
+30 dB over the file's room-tone floor (the noise check's floor, not the sound beside the click: the
+prove-out's clicks heard as "low, 1 or 2" stood 23–29 dB over it, those left at 3 stood 36–50 dB, one
+at 26). Inside speech a click is
 not a defect (every t, k, p and ch is one): a speech-wide search listed almost only
 consonants when heard. So only a click in a pause is listed, and only when it is
 brief (in several half-octave bands from 1 to 16 kHz it rises at least 8 dB over
