@@ -128,6 +128,17 @@ text rounds, as for hum and plosive).
     report says "breath model: off" and why; below 16 kHz the model does not run on that
     file, and a file it fails on keeps its breaths unconfirmed (with a note), never losing
     its other checks.
+- **Breath cut off into silence** (with the model; informational). A breath (the model ≥ 0.5
+  for ≥ 50 ms, ending ≤ 40 ms before) running straight into a 50–80 ms hole of exact digital
+  silence with sound after it — a generated clip that ended mid-breath — is reported when
+  nothing above lists it (it replaces a quiet breath at the same spot). On the calibration title
+  the breaths QC removed by cutting them to silence mostly sat at such a hole (63/69 within
+  0.3 s); holes alone are the generator's clip gaps (about 45 of 40–60 ms per 15 minutes), and
+  nothing measured told QC's apart from the rest. By ear (operator): of 20 with holes from 27 ms,
+  most were "too short to really matter" while QC's had distinct gaps → minimum 50 ms (31 there,
+  1.0 per 15 minutes, 8 of them QC's; 8 on a second title; none on the test book); of the next 24,
+  none was "truly rejectable" on its own → informational, not a problem. The model finds breaths
+  shorter than FinalPass's 150 ms.
 
 ### 3.2 Word ends abruptly at a clip end (local model)
 
@@ -230,7 +241,10 @@ overlapping a mouth-click inhale or up to 200 ms after it is part of that breath
 QC-noted pops; a blind round of 32 looser candidates: 10 of 11 wanted, 1 of 21 others
 (limits set on those clips); held out, 29 of 32 listings were plosives by ear. About 11 per
 15-minute chapter. Skipped, with a note, at 16 kHz and below (the word's high band is not
-there).
+there). At a generated clip's start — within 60 ms after ≥ 20 ms of exact digital
+silence — the word's onset follows at once and overlaps the pop, so there it needs only 15 dB of
+low-band dominance and the word may follow from 50 ms: over 4,193 clip starts of 70 sample files
+this adds 9 listings, all 9 confirmed as pops by ear; elsewhere the rule is unchanged.
 
 ### 3.7 Click in a pause
 

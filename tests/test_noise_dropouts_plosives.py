@@ -7,7 +7,9 @@ from scipy.signal import lfilter
 
 from finalpass_audiobook.checks.dropouts import dropout_findings
 from finalpass_audiobook.checks.noise import floor_track, noise_findings
-from finalpass_audiobook.checks.plosives import plosive_findings
+from dataclasses import replace
+
+from finalpass_audiobook.checks.plosives import PlosiveTunables, plosive_findings
 from synth import RNG, SR, chapter, phrase, room
 
 
@@ -277,3 +279,33 @@ def test_a_loud_listed_hum_does_not_lift_the_floor_around_it() -> None:
     loud, _ = floor_track(x + hum, SR, exclude=[([180.0], 0.0, whole, -40.0)])
     assert np.median(quiet) - np.median(clean) > 10.0
     assert np.median(loud) - np.median(clean) < 4.0                 # its farther sidelobes: about 3 dB
+
+
+def _at_clip_start(lead_s: float = 0.06, gap_s: float = 0.077, pop_after_s: float = 0.015,
+                   amp: float = 0.1) -> tuple[np.ndarray, int]:
+    """A phrase, digital silence, then a clip that starts with a pop and its word `lead_s` after the pop."""
+    pre = np.concatenate([phrase(3), room(0.5)])
+    word = phrase(3)
+    lead = np.zeros(int((pop_after_s + lead_s) * SR))
+    pop = _thump(amp)
+    lead[int(pop_after_s * SR):int(pop_after_s * SR) + len(pop)] += pop
+    lead[int(pop_after_s * SR) + len(pop):] += room(len(lead) / SR)[: len(lead) - int(pop_after_s * SR) - len(pop)]
+    lead[:int(pop_after_s * SR)] = room(pop_after_s)[: int(pop_after_s * SR)]
+    x = np.concatenate([pre, np.zeros(int(gap_s * SR)), lead, word, room(0.5)])
+    return x, len(pre) + int(gap_s * SR) + int(pop_after_s * SR)
+
+
+def test_a_pop_at_a_clip_start_may_sit_closer_to_its_word() -> None:
+    """60 ms to the word is too soon elsewhere (75 ms), not where a clip starts on the pop (from 50 ms)."""
+    x, at = _at_clip_start()
+    (f,) = plosive_findings(chapter(x))
+    assert abs(f.start_sample - at) < int(0.02 * SR) and f.measures["at_clip_start"] == "yes"
+    assert 50 <= f.measures["ms_to_word"] < 75
+    y, _ = _before_word(_thump(0.1), lead_s=0.06)         # the same pop and timing, no silence before it
+    assert plosive_findings(chapter(y), (), replace(PlosiveTunables(), min_ms_to_word=50))   # (only the timing stops it)
+    assert plosive_findings(chapter(y)) == []
+
+
+def test_a_pop_long_after_the_silence_gets_no_exception() -> None:
+    x, _ = _at_clip_start(pop_after_s=0.15)
+    assert plosive_findings(chapter(x)) == []

@@ -19,7 +19,7 @@ from .activity import tunables as pause_tunables
 from . import breath_model as breath_weights
 from .breath_np import to_16k
 from .chapter import Chapter, ChapterError
-from .checks.breaths import BreathConfirm, BreathSeverity, breath_findings
+from .checks.breaths import BreathConfirm, BreathCutTunables, BreathSeverity, breath_cut_findings, breath_findings
 from .checks.clicks import ClickTunables, click_findings, rise_db
 from .checks.ticks import TickTunables, tick_findings
 from .checks.dropouts import DropoutTunables, dropout_findings
@@ -42,6 +42,7 @@ class RunOptions:
     truncation: bool = True
     breath_model: bool = True
     breath_confirm: BreathConfirm = field(default_factory=BreathConfirm)
+    breath_cut: BreathCutTunables = field(default_factory=BreathCutTunables)
     breaths: BreathTunables = field(default_factory=BreathTunables)
     breath_severity: BreathSeverity = field(default_factory=BreathSeverity)
     hum: HumTunables = field(default_factory=HumTunables)
@@ -61,6 +62,7 @@ class RunOptions:
             breaths["speech_loud_rule"] = "off where the breath model ran"
         return {"breaths": breaths, "breath_severity": self.breath_severity.as_dict(),
                 "breath_model": self.breath_confirm.as_dict() if state == "on" else state,
+                "breath_cut_off": self.breath_cut.as_dict() if state == "on" else "off (needs the breath model)",
                 "hum": self.hum.as_dict(), "noise": self.noise.as_dict(),
                 "dropouts": self.dropouts.as_dict(), "plosives": self.plosives.as_dict(),
                 "clicks": self.clicks.as_dict(), "ticks": self.ticks.as_dict(), "pauses": pause_tunables(),
@@ -177,6 +179,12 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
     if not breath_check:                     # breath features need the band above 5 kHz: room tone reads as breath
         breath_list, quiet_breaths = [], []
         notes.append(f"breath check skipped: {ch.sr / 1000:g} kHz audio (needs {MIN_BREATH_RATE / 1000:g} kHz or more)")
+    # a breath cut off into a short hole of digital silence (the model finds the short ones FinalPass skips)
+    cut_off = breath_cut_findings(ch, confirm, [(f.start_sample, f.end_sample) for f in breath_list], opts.breath_cut) \
+        if confirm is not None and breath_check else []
+    kept = [q for q in quiet_breaths
+            if not any(q.start_sample < f.end_sample and q.end_sample > f.start_sample for f in cut_off)]
+    promoted, quiet_breaths = len(quiet_breaths) - len(kept), kept      # a quiet breath cut off is reported as that
     findings += breath_list
     say("pauses")
     act = measure(ch)
@@ -228,11 +236,12 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
                      if all(abs(f.start_sample - k.start_sample) > near for k in ticks)]
     findings = _clear_of_invalid(findings, ch)
     findings.sort(key=lambda f: (f.start_sample, -f.severity))
-    counts = {"breaths": (len(breath_list) + len(quiet_breaths)) if breath_check else 0,
+    counts = {"breaths": (len(breath_list) + len(quiet_breaths) + len(cut_off)) if breath_check else 0,
+              "breaths_cut_off": len(cut_off),
               "breaths_detected": len(breaths.breaths),
               "mouth_click_inhales": sum(f.measures.get("mouth_click") == "yes" for f in breath_list),
               "breaths_listed": len(breath_list), "quiet_breaths": len(quiet_breaths), "pauses": len(act.pauses),
-              "breaths_not_confirmed": (len(breaths.breaths) - len(breath_list) - len(quiet_breaths)
+              "breaths_not_confirmed": (len(breaths.breaths) - len(breath_list) - len(quiet_breaths) - promoted
                                         if confirm is not None else 0),
               "phrase_ends_scored": len(records)}
     for f in findings:
@@ -243,7 +252,7 @@ def analyze_file(path: Path, opts: RunOptions, model=None, stage: Callable[[str]
         audio_format=audio_format, channels=ch.audio.channel_count,
         narration_dbfs=round(ch.narration_dbfs, 2) if ch.narration_dbfs == ch.narration_dbfs else None,
         noise_floor_dbfs=round(floor, 1) if floor is not None else None,
-        findings=findings, informational=sorted(quiet_breaths, key=lambda f: f.start_sample), pauses=pauses,
+        findings=findings, informational=sorted(quiet_breaths + cut_off, key=lambda f: f.start_sample), pauses=pauses,
         truncation_candidates=records, counts=counts, breath_model=state,
         notes=ch.notes + [n for n in breaths.notes if n not in ch.notes] + notes,
     )

@@ -334,3 +334,78 @@ def test_a_newline_in_a_file_name_does_not_break_the_text_report(tmp_path: Path)
     r, _ = _check(tmp_path, [wav], "--no-breath-model")
     assert r.exit_code == 0, r.output
     assert "== a\\nb.wav" in (tmp_path / "rep" / "issues.txt").read_text()
+
+
+# --- a breath cut off into silence -------------------------------------------------------------
+
+
+def _cut_breath(hole_ms: float = 60.0, breath_s: float = 0.25, breath_dbfs: float = -50.0, after: bool = True):
+    """A phrase, room tone, a breath-like noise running straight into exact digital silence, then a phrase."""
+    from synth import band_noise
+    pre = np.concatenate([phrase(4), room(0.3)])
+    breath = band_noise(breath_s, 1500, 8000, breath_dbfs)
+    hole = np.zeros(int(hole_ms * SR / 1000))
+    x = np.concatenate([pre, breath, hole] + ([phrase(3), room(0.5)] if after else []))
+    return x, len(pre), len(pre) + len(breath)
+
+
+def _probs(x: np.ndarray, on: tuple[int, int]) -> np.ndarray:
+    p = np.zeros(1 + len(x) // (SR // 100), np.float32)
+    p[int(on[0] / SR * 100):int(on[1] / SR * 100)] = 1.0
+    return p
+
+
+def test_a_breath_running_into_a_hole_is_reported_as_informational() -> None:
+    from finalpass_audiobook.checks.breaths import CUT_OFF_TEXT, breath_cut_findings
+    x, b0, b1 = _cut_breath()
+    (f,) = breath_cut_findings(chapter(x), _probs(x, (b0, b1)), [])
+    assert f.check == "breaths" and f.severity == 0 and f.problem == CUT_OFF_TEXT
+    assert abs(f.start_sample - b0) <= SR // 100 and abs(f.end_sample - (b1 + int(0.06 * SR))) <= 2   # a word may start on a zero
+    assert f.measures["silence_ms"] == pytest.approx(60.0, abs=0.1) and 230 <= f.measures["duration_ms"] <= 250
+    assert f.measures["breath_dbfs"] == pytest.approx(-50.0, abs=1.0)
+
+
+@pytest.mark.parametrize("case", ["hole too long", "hole too short", "nothing after", "breath stops early",
+                                  "breath too short", "already listed"])
+def test_only_a_breath_running_straight_into_a_short_hole_counts(case: str) -> None:
+    from finalpass_audiobook.checks.breaths import breath_cut_findings
+    x, b0, b1 = _cut_breath(hole_ms={"hole too long": 100.0, "hole too short": 45.0}.get(case, 60.0),
+                            breath_s=0.03 if case == "breath too short" else 0.25, after=case != "nothing after")
+    on = (b0, b1 - int(0.06 * SR)) if case == "breath stops early" else (b0, b1)
+    listed = [(b0, b1)] if case == "already listed" else []
+    assert breath_cut_findings(chapter(x), _probs(x, on), listed) == []
+
+
+def test_the_run_reports_a_quiet_breath_cut_off_into_silence_once(tmp_path: Path) -> None:
+    """A breath too quiet for the loudness scale moves up from informational; without the model nothing changes."""
+    x, b0, b1 = _cut_breath(breath_dbfs=-55.0)
+    p = tmp_path / "c.wav"
+    sf.write(str(p), x, SR, subtype="PCM_24")
+    with_model = run_mod.analyze_file(p, run_mod.RunOptions(truncation=False), breath_model=_EnergyModel(),
+                                      breath_state="on")
+    assert not [f for f in with_model.findings if f.problem == breaths_mod.CUT_OFF_TEXT]      # not a problem
+    near = [q for q in with_model.informational if q.start_sample < b1 + SR // 10 and q.end_sample > b0]
+    assert [q.problem for q in near] == [breaths_mod.CUT_OFF_TEXT] and near[0].severity == 0
+    assert with_model.counts["breaths_cut_off"] == 1
+    without = run_mod.analyze_file(p, run_mod.RunOptions(truncation=False, breath_model=False))
+    assert not [f for f in without.findings + without.informational if f.problem == breaths_mod.CUT_OFF_TEXT]
+    assert run_mod.RunOptions().tunables("off")["breath_cut_off"] == "off (needs the breath model)"
+
+
+def test_a_quiet_breath_that_is_cut_off_is_listed_once_not_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from finalpass_audiobook.findings import Finding
+    x, b0, b1 = _cut_breath(breath_dbfs=-55.0)
+    p = tmp_path / "c.wav"
+    sf.write(str(p), x, SR, subtype="PCM_24")
+    real = run_mod.breath_findings
+
+    def with_a_quiet_one(ch, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        problems, quiet, result = real(ch, *args, **kwargs)
+        q = Finding(file=ch.name, check="breaths", start_sample=b0, end_sample=b1, start_time=ch.clock(b0),
+                    end_time=ch.clock(b1), severity=0, problem="quiet breath", measures={})
+        return problems, quiet + [q], result
+
+    monkeypatch.setattr(run_mod, "breath_findings", with_a_quiet_one)
+    fr = run_mod.analyze_file(p, run_mod.RunOptions(truncation=False), breath_model=_EnergyModel(), breath_state="on")
+    assert [q.problem for q in fr.informational if q.start_sample < b1 and q.end_sample > b0] == [breaths_mod.CUT_OFF_TEXT]
+    assert fr.counts["quiet_breaths"] == len(fr.informational) - fr.counts["breaths_cut_off"]

@@ -44,6 +44,20 @@ at a word's end before a pause ("t", "k", "p", "ch", "s"); the model, trained wi
 them apart. Held-out evidence: breaths kept 18/18 and 16/16 on two titles, consonants listed 5/28 (4 of them
 "breathy"), 0/14 on a breathless test voice; mouth-click inhales kept 43/43 + 8/8; at 150 ms one breath would
 be lost (docs/PLAN.md 3.1).
+
+Breath cut off into silence (with the model only; informational): a breath that runs straight into a hole of
+exact digital silence (50-80 ms, sound after it) — a generated clip that ended mid-breath — is reported if nothing
+above lists it (it replaces a quiet breath at the same spot). On the calibration title's QC report, the breaths
+QC removed by cutting them to silence mostly sat right at such a hole (63 of 69 within 0.3 s; in 44 the removed
+breath ends exactly where the hole begins). Holes alone are everywhere (about 45 of 40-60 ms per 15 minutes, the
+generator's clip gaps), so only a breath running into one counts: 374 on that title, 48 of the QC ones among
+them, a QC share of 17 % against at most 2.6 % for the breaths listed by loudness. Nothing measured (the breath's
+length or level, how abruptly it meets the silence, the hole's length, the timing) told QC's apart from the rest,
+so all are listed. Not listed by loudness: 137 there (4.5 per 15 minutes), holding 21 of the 33 QC breath cut-outs
+missed before; a second title 12, the test book none. The model finds breaths shorter than FinalPass's 150 ms.
+Heard by the operator: of 20 such breaths QC had not flagged, most holes were "too short to really matter" (QC's
+own had distinct gaps), so the minimum became 50 ms (31 there, 1.0 per 15 minutes; 8 of QC's); of the next 24
+none was "truly rejectable" (one held a plosive, not the cut) — so it is informational, not a problem.
 """
 from __future__ import annotations
 
@@ -84,6 +98,62 @@ class BreathConfirm:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class BreathCutTunables:
+    min_silence_ms: float = 50.0         # a hole of exact digital silence this long...
+    max_silence_ms: float = 80.0         # ...up to this long, with sound after it
+    probability: float = 0.5             # the breath model says breath from this probability
+    reach_ms: float = 40.0               # the breath ends at most this long before the hole
+    min_breath_ms: float = 50.0          # and lasts at least this long
+    listed_within_ms: float = 400.0      # a breath already listed ending this close before the hole covers it
+    severity: int = 0                    # informational (operator, after two rounds by ear)
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+CUT_OFF_TEXT = "breath cut off into silence"
+
+
+def breath_cut_findings(ch: Chapter, probs: np.ndarray, listed: list[tuple[int, int]],
+                        t: BreathCutTunables = BreathCutTunables()) -> list[Finding]:
+    """Breaths running straight into a short hole of exact digital silence, not already listed. `probs`: the breath
+    model's probability per 10 ms (frame i at i * 10 ms); `listed`: the spans of the breaths already listed."""
+    x, sr = ch.x, ch.sr
+    d = np.diff(np.concatenate(([0], (x == 0).astype(np.int8), [0])))
+    reach, need = int(round(t.reach_ms / 10)), int(round(t.min_breath_ms / 10))
+    within = int(round(t.listed_within_ms * sr / 1000))
+    out: list[Finding] = []
+    for a, b in zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)):
+        silence = (b - a) * 1000 / sr
+        if a == 0 or b >= len(x) or not t.min_silence_ms <= silence <= t.max_silence_ms:
+            continue
+        fa = min(int(a / sr * 100), len(probs))          # the frame at the hole
+        j = fa - 1
+        while j >= max(0, fa - reach) and probs[j] < t.probability:
+            j -= 1
+        if j < max(0, fa - reach) or probs[j] < t.probability:
+            continue                                     # no breath ends at the hole
+        k = j
+        while k > 0 and (probs[k - 1] >= t.probability or (k > 1 and probs[k - 2] >= t.probability)):
+            k -= 1                                       # back to the breath's start, over one-frame dips
+        if j - k + 1 < need:
+            continue
+        if any(s < a + int(0.02 * sr) and e > a - within for s, e in listed):
+            continue                                     # already listed as a breath
+        start = int(k * sr / 100)
+        seg = x[start:a].astype(np.float64)
+        level = float(10 * np.log10(max(float(np.mean(seg ** 2)) if seg.size else 0.0, 1e-20)))
+        out.append(Finding(
+            file=ch.name, check="breaths", start_sample=start, end_sample=int(b), start_time=ch.clock(start),
+            end_time=ch.clock(int(b)), severity=t.severity, problem=CUT_OFF_TEXT,
+            measures={"duration_ms": (j - k + 1) * 10, "silence_ms": round(silence, 1), "breath_dbfs": round(level, 1),
+                      "level_vs_narration_db": round(level - ch.narration_dbfs, 1)
+                      if np.isfinite(ch.narration_dbfs) else "n/a",
+                      "cut_into_silence": "yes", "mouth_click": "no"}))
+    return out
 
 
 def confirmed_ms(confirm: np.ndarray, sr: int, start: int, end: int, rule: BreathConfirm = BreathConfirm()) -> int:

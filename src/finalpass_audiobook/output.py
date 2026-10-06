@@ -9,6 +9,7 @@ from pathlib import Path
 
 from finalpass.timecode import samples_to_clock
 
+from .checks.breaths import CUT_OFF_TEXT
 from .checks.pauses import listed
 from .findings import SEVERITIES, FileResult, Finding, RunReport
 
@@ -25,7 +26,7 @@ LEGACY_HEADER = "file,time,problem,severity,end_time,check,measures"   # per-fil
 PROBLEMS_LABEL = "PROBLEM EVENTS"
 PROBLEMS_NOTE = "severity 3 = worst, 2 = likely to draw a note, 1 = worth a listen"
 INFO_LABEL = "INFORMATIONAL EVENTS"
-INFO_NOTE = "quiet breaths and, when asked for, the pause map; no severity"
+INFO_NOTE = "quiet breaths, breaths cut off into silence and, when asked for, the pause map; no severity"
 # An empty row written as empty cells (",,,,,,"): a truly blank line is dropped by some spreadsheet
 # apps when they open a CSV, which would lose the spacing.
 SPACER = [""] * len(ISSUE_COLUMNS)
@@ -48,7 +49,7 @@ def tally(findings: list[Finding]) -> str:
 # The measures a CSV shows, per check: the few a mixer uses (the rest repeat the event text or are
 # internal). report.json keeps every measure. A check not listed here shows all of its measures.
 CSV_MEASURES = {
-    "breaths": ("loudness_db", "duration_ms", "ms_since_word", "click_db_vs_narration"),
+    "breaths": ("loudness_db", "duration_ms", "ms_since_word", "click_db_vs_narration", "silence_ms"),
     "hum": ("level_dbfs", "harmonics_hz", "other_lines_hz", "found_by"),
     "noise": ("floor_under_speech_db", "floor_median_dbfs", "duration_s"),
     "dropout": ("silence_ms", "level_before_dbfs", "level_after_dbfs"),
@@ -270,7 +271,8 @@ def summary_rows(fr: FileResult, pauses: int | None, context: dict | None = None
     fmt = [x.strip() for x in fr.audio_format.split(",", 1)] if fr.audio_format else []
     fmt += [f"{sr / 1000:g} kHz"] if sr else []
     fmt += [f"{fr.channels} channel{'' if fr.channels == 1 else 's'}"] if fr.channels else []
-    quiet = len(fr.informational)
+    cut = sum(f.problem == CUT_OFF_TEXT for f in fr.informational)
+    quiet = len(fr.informational) - cut
     rows = [[REPORT_MARKER, context.get("version", "")],
             ["file", _cell(fr.file)],
             ["folder", _cell(_real(Path(fr.path)).parent) if fr.path else ""],
@@ -278,11 +280,14 @@ def summary_rows(fr: FileResult, pauses: int | None, context: dict | None = None
             ["duration", samples_to_clock(round(fr.duration_seconds * sr), sr) if sr else ""],
             ["problem events", len(fr.findings), *(f"{sum(f.severity == k for f in fr.findings)} × sev {k}"
                                                    for k in SEVERITIES)],
-            ["informational events", quiet + (pauses or 0), f"{quiet} quiet breaths",
-             f"{pauses} pauses" if pauses is not None else "pause rows off"]]
+            ["informational events", quiet + cut + (pauses or 0), f"{quiet} quiet breaths",
+             f"{pauses} pauses" if pauses is not None else "pause rows off"]
+            + ([f"{cut} breaths cut off into silence"] if cut else [])]
     if "breaths" in c:
         row = ["breaths", c["breaths"], f"{c.get('breaths_listed', 0)} problems",
                f"{c.get('mouth_click_inhales', 0)} mouth-click inhales", f"{c.get('quiet_breaths', 0)} quiet"]
+        if c.get("breaths_cut_off"):
+            row.append(f"{c['breaths_cut_off']} cut off into silence")
         if c.get("breaths_not_confirmed"):
             row.append(f"{c['breaths_not_confirmed']} not confirmed by the breath model")
         rows.append(row)

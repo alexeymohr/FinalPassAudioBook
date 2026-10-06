@@ -26,6 +26,12 @@ other 21. The limits were set on those same clips; held out, 32 listings never h
 word), 2 normal consonants and 1 nothing; the operator's "large"/"nasty" pops were severity 3.
 About 11 per 15-minute chapter (6 / 4 / 1 at severity 1 / 2 / 3). The earlier rule (20-65 Hz, louder than the speech, never near a breath)
 found none of the QC-noted pops.
+
+At a generated clip's start — the pop comes within 60 ms after a run of exact digital silence (>= 20 ms) — the
+word's onset follows almost at once and its high end overlaps the pop, so there the pop needs only 15 dB of
+low-band dominance and the word may follow from 50 ms. The operator heard such a pop (-36 dBFS, 18.4 dB, word 60 ms
+after) in a breath round; measured over all 4,193 clip starts of 70 sample files this adds 9 listings (1 on the
+calibration title, 8 on a second), and the operator confirmed all 9 as pops. Elsewhere the rule is unchanged.
 """
 from __future__ import annotations
 
@@ -58,6 +64,12 @@ class PlosiveTunables:
     max_ms_to_word: float = 150.0
     min_fall_db: float = 30.0          # the low band's fall between the pop and the word
     mouth_click_after_ms: float = 200.0
+    # At a generated clip's start (the pop comes out of digital silence) the word's onset follows almost at once and
+    # its high end overlaps the pop: there it needs less dominance and the word may come sooner.
+    clip_start_silence_ms: float = 20.0        # exact digital zeros at least this long before...
+    clip_start_within_ms: float = 60.0         # ...ending at most this long before the pop
+    clip_start_low_over_high_db: float = 15.0
+    clip_start_min_ms_to_word: float = 50.0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -88,6 +100,11 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
     # listed from the level that shows as min_dbfs (graded on the whole dB shown)
     peaks = np.flatnonzero((low >= t.min_dbfs - 0.5) & (low == maximum_filter1d(low, 2 * near + 1, mode="nearest")))
     after = int(t.mouth_click_after_ms / 1000 * ch.sr)
+    d = np.diff(np.concatenate(([0], (ch.x == 0).astype(np.int8), [0])))
+    need = int(round(t.clip_start_silence_ms / 1000 * ch.sr))
+    clip_starts = np.array([e for a, e in zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)) if e - a >= need and a > 0],
+                           dtype=np.int64)            # the first sample after each run of digital silence
+    within = blocks(t.clip_start_within_ms)
     out: list[Finding] = []
     for j in peaks:
         if j < 1 or j + w_to >= m:
@@ -99,8 +116,10 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
             hi += 1
         if (hi - lo + 1) * block_s * 1000 > t.max_width_ms:
             continue
+        k = int(np.searchsorted(clip_starts, j * n * q, side="right")) - 1
+        at_clip_start = k >= 0 and j - clip_starts[k] // (n * q) <= within
         high_at = float(high[j - 1:j + 2].max())
-        if low[j] - high_at < t.low_over_high_db:
+        if low[j] - high_at < (t.clip_start_low_over_high_db if at_clip_start else t.low_over_high_db):
             continue
         word = float(high[j + w_from:j + w_to].max())
         if word - high_at < t.word_over_pop_db:
@@ -109,7 +128,7 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
         if onset is None:
             continue
         to_word = (onset - j) * block_s * 1000
-        if not (t.min_ms_to_word <= to_word <= t.max_ms_to_word):
+        if not ((t.clip_start_min_ms_to_word if at_clip_start else t.min_ms_to_word) <= to_word <= t.max_ms_to_word):
             continue
         if low[j] - float(low[j + 1:onset].min()) < t.min_fall_db:
             continue
@@ -124,6 +143,7 @@ def plosive_findings(ch: Chapter, mouth_click_spans: tuple[tuple[int, int], ...]
             severity=ladder(level, (t.min_dbfs, t.sev2_dbfs, t.sev3_dbfs)),
             problem=f"plosive pop before a word, {level} dBFS below 100 Hz",
             measures={"low_dbfs": round(float(low[j]), 1), "low_over_high_db": round(float(low[j] - high_at), 1),
-                      "ms_to_word": int(round(to_word)), "width_ms": int(round((hi - lo + 1) * block_s * 1000))},
+                      "ms_to_word": int(round(to_word)), "width_ms": int(round((hi - lo + 1) * block_s * 1000)),
+                      "at_clip_start": "yes" if at_clip_start else "no"},
         ))
     return out
