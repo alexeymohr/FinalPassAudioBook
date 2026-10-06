@@ -297,3 +297,9 @@ def test_a_line_steady_only_while_words_sound_is_not_a_hum() -> None:
     (steady,) = [f for f in hum_findings(chapter(x + _tones(len(x), ((41.5, -60.0),))))
                  if abs(f.measures["frequency_hz"] - 41.5) < 1]
     assert steady.severity == 1
+
+
+@pytest.mark.parametrize("click_db, severity", [(-39.0, 2), (-41.0, 0), (-50.7, 0)])
+def test_a_click_too_faint_to_hear_makes_no_mouth_click_inhale(click_db: float, severity: int) -> None:
+    """Operator heard no click at -50.7 / -50.6 dB under the narration; the faintest confirmed was -36.6."""
+    assert mouth_click_severity(500.0, click_db) == severity

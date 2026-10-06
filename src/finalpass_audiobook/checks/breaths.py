@@ -23,7 +23,10 @@ those it was measured on. Any pause from 100 to 150 ms gives the same result.
 Held-out check: 32 listings on 12 chapters, none heard before, all 32 confirmed
 by ear as mouth-click inhales (some milder than others).
 The three clicks the operator called "small" in the first study sat at narration
--20.7 to -23.9 dB, the other 29 at -18.9 dB or louder.
+-20.7 to -23.9 dB, the other 29 at -18.9 dB or louder. A click more than 40 dB under the narration is no mouth
+click: on a very clean V4 render two transients at -50.7 and -50.6 dB passed as "small mouth-click inhales" and the
+operator heard no click in either; the faintest confirmed one sat at -36.6 dB (4 of 228 on the calibration title
+fall below -40, none heard before).
 
 Every other breath is listed too (operator: no breath left behind), scored by
 loudness: FinalPass's noticeability (the breath's median level relative to the
@@ -83,6 +86,7 @@ class BreathSeverity:
     word_vs_narration_db: float = -25.0  # "the word": level within this of the narration
     silence_before_click_ms: float = 100.0
     harsh_click_vs_narration_db: float = -20.0
+    min_click_vs_narration_db: float = -40.0   # fainter: no mouth click (inaudible; the breath is graded alone)
     breath_sev1_db: float = -31.6        # loudness (noticeability) from which a breath is severity 1...
     breath_sev2_db: float = -26.4        # ...2
     breath_sev3_db: float = -22.5        # ...3; below sev1 it is quiet: informational
@@ -164,8 +168,8 @@ def confirmed_ms(confirm: np.ndarray, sr: int, start: int, end: int, rule: Breat
 
 
 def mouth_click_severity(silence_ms: float, click_rel_db: float, s: BreathSeverity = BreathSeverity()) -> int:
-    """0 when the click follows its word directly (a consonant), else 3 (harsh) or 2."""
-    if silence_ms < s.silence_before_click_ms:
+    """0 when the click follows its word directly (a consonant) or is too faint to hear, else 3 (harsh) or 2."""
+    if silence_ms < s.silence_before_click_ms or click_rel_db < s.min_click_vs_narration_db:
         return 0
     return 3 if click_rel_db >= s.harsh_click_vs_narration_db else 2
 

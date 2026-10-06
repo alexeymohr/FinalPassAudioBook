@@ -68,7 +68,8 @@ text rounds, as for hum and plosive).
   by FinalPass, or at least 8 dB sharp by the click-in-a-pause detector, from 100 ms
   before to 40 ms after the breath's start) counts only when at least 100 ms have
   passed since the word (level within 25 dB of the narration, 5 ms RMS). 3 = click
-  ≥ narration −20 dB (0.73 ms RMS peak), 2 = quieter; a click right after its word
+  ≥ narration −20 dB (0.73 ms RMS peak), 2 = quieter, none below narration −40 dB (inaudible: two
+  V4 transients at −50.7/−50.6 dB were heard as no click; the faintest confirmed was −36.6); a click right after its word
   is not listed. Evidence (operator's context-tagged breaths, one title, 35+
   chapters): mouth-click inhales 41/49, consonant-then-inhale 0/29, plain breaths
   3/127, barely audible ticks 0/4; FinalPass's own flag alone 30/39, 5/12, 8/127.
