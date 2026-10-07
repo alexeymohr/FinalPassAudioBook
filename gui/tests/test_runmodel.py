@@ -6,6 +6,7 @@ import pytest
 
 from fpab_gui.config import Settings
 from fpab_gui.runmodel import RunModel
+from fpab_gui import runmodel
 
 FAKE_ENGINE = '''#!/usr/bin/env python3
 import json, sys
@@ -29,6 +30,12 @@ FAIL_ENGINE = '''#!/usr/bin/env python3
 import sys
 print("boom: engine exploded", file=sys.stderr)
 sys.exit(3)
+'''
+
+MODEL_DIR_ENGINE = '''#!/usr/bin/env python3
+import json, os
+print(json.dumps({"event": "done", "network_attempts": 0,
+                  "notes": [os.environ.get("FPAB_MODEL_DIR", "")]}), flush=True)
 '''
 
 
@@ -134,3 +141,17 @@ def test_clear_needs_confirmation_only_when_unsaved(engine, tmp_path):
     model.clear()
     assert model.items == []
     assert calls == []
+
+
+def test_points_engine_at_bundled_models(tmp_path, monkeypatch):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"")
+    models = tmp_path / "models"
+    models.mkdir()
+    engine = _write_script(tmp_path, "md-fpab", MODEL_DIR_ENGINE)
+    monkeypatch.setattr(runmodel, "bundled_model_dir", lambda: models)
+    model = RunModel([str(engine)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model.add([wav])
+    model.go()
+    _wait(model)
+    assert model.run_notes == [str(models)]

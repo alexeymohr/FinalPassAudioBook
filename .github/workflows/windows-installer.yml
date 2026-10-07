@@ -1,0 +1,36 @@
+# Build the one-click Windows installer and upload it as an artifact. Signing is not
+# configured, so the artifact is unsigned (SmartScreen will warn). Actions are pinned to
+# commit hashes, as in tests.yml.
+name: windows-installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        with:
+          version: "0.11.7"
+          enable-cache: false
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build the installer
+        shell: pwsh
+        run: ./windows/build.ps1
+      - name: Upload the installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: windows-installer
+          path: windows/dist/*-setup.exe
+          if-no-files-found: error

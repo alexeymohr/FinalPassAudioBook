@@ -38,6 +38,9 @@ pythonw -m fpab_gui          # Windows, no console window
 gui/install-desktop.sh       # Linux: add it to the applications menu
 ```
 
+A one-click Windows installer (bundles Python, the engine and the models) is built from
+`../windows/` — see `../windows/README.md`.
+
 Set `FPAB_GUI_PYTHON` (launcher) to pick the interpreter if `python3` is not the one with
 PyGObject.
 

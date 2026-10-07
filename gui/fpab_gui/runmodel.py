@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config, placement
-from .engine import AUDIO_EXTENSIONS, EngineEvent, build_command
+from .engine import AUDIO_EXTENSIONS, EngineEvent, build_command, bundled_model_dir
 
 
 @dataclass
@@ -206,10 +206,15 @@ class RunModel:
 
         argv = build_command([item.path for item in self.items], work,
                              self.settings.with_pauses, self.engine_argv)
+        env = os.environ.copy()
+        models = bundled_model_dir()                      # a bundled install runs offline: no ~/.cache
+        if models is not None:
+            env["FPAB_MODEL_DIR"] = str(models)
         stderr = open(err, "wb")                     # noqa: SIM115 — closed by the reader thread
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                    stderr=stderr, cwd=str(work), text=True, encoding="utf-8")
+                                    stderr=stderr, cwd=str(work), text=True, encoding="utf-8",
+                                    env=env)
         except OSError as exc:
             stderr.close()
             self.error_text = f"Could not start the engine: {exc}"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,17 +67,35 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def app_dir() -> Path:
+    """Where the app's own files live: the frozen executable's folder, else the repo."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return repo_root()
+
+
+def bundled_model_dir() -> Path | None:
+    """The model weights shipped beside the app (`models/`), if present — a one-click
+    install has no network and no `~/.cache`."""
+    candidate = app_dir() / "models"
+    return candidate if candidate.is_dir() else None
+
+
 def find_engine(explicit: str | None = None) -> list[str]:
     """The argv prefix that runs the engine, most specific first.
 
-    Order: an explicit path, `$FPAB_ENGINE`, the project's `.venv/bin/fpab`,
-    `uv run` in the repo, then `fpab` on `$PATH`.
+    Order: an explicit path, `$FPAB_ENGINE`, an `fpab` exe beside this app (a frozen
+    install bundles one), the project's `.venv`, `uv run` in the repo, then `$PATH`.
     """
     if explicit:
         return [explicit]
     from_env = os.environ.get("FPAB_ENGINE")
     if from_env:
         return [from_env]
+    for name in ("fpab.exe", "fpab"):
+        beside = app_dir() / name
+        if beside.is_file():
+            return [str(beside)]
     repo = repo_root()
     for venv in (repo / ".venv" / "bin" / "fpab",             # POSIX layout
                  repo / ".venv" / "Scripts" / "fpab.exe",     # Windows layout

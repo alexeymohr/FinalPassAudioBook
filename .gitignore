@@ -60,3 +60,8 @@ macos/build/
 macos/.build/
 .DS_Store
 !macos/Resources/
+
+# Windows installer build output
+windows/build/
+windows/dist/
+windows/staging/

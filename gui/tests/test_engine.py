@@ -1,3 +1,4 @@
+from fpab_gui import engine
 from fpab_gui.engine import EngineEvent, build_command, find_engine, repo_root
 
 
@@ -44,3 +45,18 @@ def test_find_engine_prefers_project_venv(monkeypatch):
     (repo_root() / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
     found = find_engine(None)
     assert found[-1].endswith("fpab")
+
+
+def test_find_engine_beside_frozen_app(monkeypatch, tmp_path):
+    exe = tmp_path / "fpab.exe"
+    exe.write_bytes(b"")
+    monkeypatch.delenv("FPAB_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path)
+    assert find_engine(None) == [str(exe)]
+
+
+def test_bundled_model_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path)
+    assert engine.bundled_model_dir() is None
+    (tmp_path / "models").mkdir()
+    assert engine.bundled_model_dir() == tmp_path / "models"
