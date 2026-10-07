@@ -69,10 +69,20 @@ be checked (no audio found, an unusable `--out`); with `--progress jsonl`, which
 app uses, it exits 0 once the run completes and reports problems per file.
 `fpab setup-model` is the only command that uses the network.
 
-A drag-and-drop macOS app (sandboxed, no network) that writes the same per-file
-CSVs builds from [macos/](macos/README.md).
+## Desktop apps
+
+Drop WAV files (or folders) in, press Go, and get the same per-file CSVs.
+
+- **Linux:** a GTK 4 app; **Windows:** a Tkinter app — both from [gui/](gui/README.md)
+  (`gui/fpab-gui`, or `gui\fpab-gui.cmd` on Windows).
+- **Windows installer:** a one-click, per-user setup that bundles the GUI, the engine and
+  both models, built from [windows/](windows/README.md); releases carry the setup exe.
+- **macOS:** a sandboxed, no-network drag-and-drop app from [macos/](macos/README.md).
 
 Tests use synthetic audio only: `uv run pytest`.
+
+Developer docs: [CONTRIBUTING.md](CONTRIBUTING.md) (setup, tests, conventions) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how the code is put together).
 
 Two local models, both run as our numpy ports (no PyTorch), their upstream torch
 code vendored unmodified at a pinned revision as the reference the ports are tested
