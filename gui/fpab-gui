@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Launch the FinalPass AudioBook GUI. Runs on a Python with PyGObject (python3-gi);
+# the fpab engine itself is found automatically (project .venv, then uv, then PATH).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+exec "${FPAB_GUI_PYTHON:-python3}" -m fpab_gui "$@"
