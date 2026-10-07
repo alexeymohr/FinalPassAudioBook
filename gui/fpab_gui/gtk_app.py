@@ -15,8 +15,6 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
-from . import __version__  # noqa: E402
-from .engine import EngineError, find_engine  # noqa: E402
 from .runmodel import RunModel  # noqa: E402
 
 CSS = """
@@ -446,21 +444,11 @@ class FPABApplication(Gtk.Application):
         self.window.present()
 
 
-def main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(prog="fpab-gui",
-                                     description="FinalPass AudioBook — desktop QC for audiobook chapters.")
-    parser.add_argument("--engine", help="path to the fpab executable (default: auto-detect)")
-    parser.add_argument("--version", action="version", version=f"fpab-gui {__version__}")
-    args = parser.parse_args(argv)
-    try:
-        engine = find_engine(args.engine)
-    except EngineError as exc:
-        print(f"fpab-gui: {exc}", file=sys.stderr)
-        return 2
-    return FPABApplication(engine).run([sys.argv[0]])
+def run(engine_argv: list[str]) -> int:
+    return FPABApplication(engine_argv).run([sys.argv[0]])
 
 
 if __name__ == "__main__":
+    from .cli import main
+
     raise SystemExit(main())

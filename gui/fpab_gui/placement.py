@@ -1,10 +1,9 @@
 """Put a finished CSV where the operator asked, never replacing a file.
 
-Port of the macOS app's `Placement.swift`, POSIX only: Linux has no App Sandbox,
-so the file-coordinator and security-scope machinery is unnecessary and the
-numbered-name dance is always allowed (the difference the Mac had to ask a folder
-grant for). An existing file is never replaced — a new report gets `<name> (2).csv`,
-`(3)`, … — and a name that belongs to another audio file (`a (2).wav`) is skipped.
+Port of the macOS app's `Placement.swift` without the sandbox: an existing file is
+never replaced — a new report gets `<name> (2).csv`, `(3)`, … — and a name that
+belongs to another audio file (`a (2).wav`) is skipped. POSIX and Windows both: the
+`O_NOFOLLOW` guard is used where the platform has it.
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ from pathlib import Path
 
 AUDIO_SUFFIXES = (".wav", ".bwf", ".WAV", ".BWF")
 MAX_NUMBERED = 10_000
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)        # absent on Windows; O_EXCL still refuses an existing name
 
 
 def fold(name: str) -> str:
@@ -41,11 +41,12 @@ def _audio_named(target: Path) -> bool:
 def _write_new(data: bytes, target: Path) -> bool:
     """Write `data` as a new file at `target`; False if something is already there.
 
-    Never over a file, never through a symlink (`O_EXCL | O_NOFOLLOW`). A file this
-    call created but could not finish is removed — only that file, by device and inode.
+    Never over a file, never through a symlink (`O_EXCL | O_NOFOLLOW` where available).
+    A file this call created but could not finish is removed — only that file, by device
+    and inode.
     """
     try:
-        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o644)
     except FileExistsError:
         return False
     except OSError as exc:

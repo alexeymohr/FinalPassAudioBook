@@ -1,15 +1,16 @@
-"""Settings and the app's own storage, under the XDG base directories.
+"""Settings and the app's own storage, per-user.
 
-Settings live in `$XDG_CONFIG_HOME/fpab-gui/settings.json`. Reports that could not be
-placed are kept under `$XDG_DATA_HOME/fpab-gui/unsaved/` and offered again at the next
-launch; a working folder from a crash is swept at startup. Port of the macOS app's
-`UserDefaults` + "Unsaved Reports" storage, without the sandbox bookmarks.
+Linux/macOS use the XDG base directories; Windows uses `%APPDATA%` (settings) and
+`%LOCALAPPDATA%` (kept reports). Reports that could not be placed are kept and offered
+again at the next launch; a working folder from a crash is swept at startup. Port of the
+macOS app's `UserDefaults` + "Unsaved Reports" storage, without the sandbox bookmarks.
 """
 from __future__ import annotations
 
 import json
 import os
 import shutil
+import sys
 import tempfile
 import uuid
 from dataclasses import dataclass
@@ -19,17 +20,30 @@ APP = "fpab-gui"
 OWNER_FILE = "owner.pid"
 RUN_PREFIX = "fpab-gui-run-"
 
+if sys.platform == "win32":
+    import ctypes
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _kernel32 = ctypes.windll.kernel32
 
-def _base(env: str, fallback: Path) -> Path:
-    return Path(os.environ.get(env) or fallback)
+
+def _config_base() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+
+
+def _data_base() -> Path:
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
 
 
 def config_dir() -> Path:
-    return _base("XDG_CONFIG_HOME", Path.home() / ".config") / APP
+    return _config_base() / APP
 
 
 def data_dir() -> Path:
-    return _base("XDG_DATA_HOME", Path.home() / ".local" / "share") / APP
+    return _data_base() / APP
 
 
 def settings_path() -> Path:
@@ -75,8 +89,14 @@ class Settings:
 def _alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        handle = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        _kernel32.CloseHandle(handle)
+        return True
     try:
-        os.kill(pid, 0)
+        os.kill(pid, 0)                              # POSIX only: signal 0 does not deliver anything
     except ProcessLookupError:
         return False
     except PermissionError:

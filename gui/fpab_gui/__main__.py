@@ -1,3 +1,3 @@
-from .gtk_app import main
+from .cli import main
 
 raise SystemExit(main())

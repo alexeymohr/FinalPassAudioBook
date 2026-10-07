@@ -78,9 +78,11 @@ def find_engine(explicit: str | None = None) -> list[str]:
     if from_env:
         return [from_env]
     repo = repo_root()
-    venv = repo / ".venv" / "bin" / "fpab"
-    if venv.is_file() and os.access(venv, os.X_OK):
-        return [str(venv)]
+    for venv in (repo / ".venv" / "bin" / "fpab",             # POSIX layout
+                 repo / ".venv" / "Scripts" / "fpab.exe",     # Windows layout
+                 repo / ".venv" / "Scripts" / "fpab"):
+        if venv.is_file() and os.access(venv, os.X_OK):
+            return [str(venv)]
     if (repo / "pyproject.toml").is_file() and shutil.which("uv"):
         return ["uv", "run", "--project", str(repo), "fpab"]
     found = shutil.which("fpab")

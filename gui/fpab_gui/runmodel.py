@@ -31,12 +31,14 @@ class Item:
 def _identity(path: Path) -> str:
     try:
         st = path.stat()
-        return f"{st.st_dev}:{st.st_ino}"
+        if st.st_ino:                                # 0 on some Windows filesystems
+            return f"{st.st_dev}:{st.st_ino}"
     except OSError:
-        try:
-            return os.path.realpath(path)
-        except OSError:
-            return str(path)
+        pass
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except OSError:
+        return os.path.normcase(str(path))
 
 
 class RunModel:
