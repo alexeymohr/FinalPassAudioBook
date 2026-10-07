@@ -28,7 +28,8 @@ try:                                              # optional: Explorer drag-and-
 except Exception:
     pass
 
-EXCLUDES = ["torch", "torchaudio", "transformers", "safetensors", "pytest", "PIL", "matplotlib"]
+EXCLUDES = ["torch", "torchaudio", "transformers", "safetensors", "pytest", "PIL", "matplotlib",
+            "gi", "gi.repository"]                # GTK is never imported on Windows (the Tk frontend is used)
 
 
 def make_analysis(script):
