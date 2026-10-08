@@ -36,7 +36,7 @@ jobs:
           version: "0.11.7"
           enable-cache: false
       - name: Install Inno Setup
-        run: choco install innosetup --version 6.3.2 --no-progress -y
+        run: choco install innosetup --version 6.3.2 --allow-downgrade --no-progress -y   # the runner image ships a newer one
       - name: Build the installer
         shell: pwsh
         run: ./windows/build.ps1
