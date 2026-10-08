@@ -1,0 +1,76 @@
+from fpab_gui import engine
+from fpab_gui.engine import EngineEvent, build_command, find_engine, repo_root
+
+
+def test_parse_start_event():
+    event = EngineEvent.parse('{"event": "start", "files": 2, "stages": ["loading", "hum"], '
+                              '"paths": ["/a.wav", "/b.wav"]}')
+    assert event is not None
+    assert event.event == "start"
+    assert event.files == 2
+    assert event.stages == ("loading", "hum")
+    assert event.paths == ("/a.wav", "/b.wav")
+
+
+def test_parse_file_done_event():
+    event = EngineEvent.parse('{"event": "file_done", "index": 0, "path": "/a.wav", '
+                              '"csv": "/tmp/a.csv", "notes": ["n"], "sev3": 1, "sev2": 2, "sev1": 3}')
+    assert event is not None
+    assert (event.index, event.sev3, event.sev2, event.sev1) == (0, 1, 2, 3)
+    assert event.notes == ("n",)
+
+
+def test_parse_ignores_unknown_fields_and_junk():
+    assert EngineEvent.parse('{"event": "done", "network_attempts": 0, "extra": 1}').event == "done"
+    assert EngineEvent.parse("not json") is None
+    assert EngineEvent.parse('{"no": "event"}') is None
+    assert EngineEvent.parse('{"event": "x", "notes": 5}') is None
+
+
+def test_build_command():
+    from pathlib import Path
+    argv = build_command([Path("a.wav"), Path("b.wav")], Path("/out"), True, ["/eng/fpab"])
+    assert argv == ["/eng/fpab", "check", "--csv-dir", str(Path("/out")), "--progress", "jsonl",
+                    "--with-pauses", "--", "a.wav", "b.wav"]
+
+
+def test_find_engine_explicit_and_env(monkeypatch, tmp_path):
+    assert find_engine("/x/fpab") == ["/x/fpab"]
+    monkeypatch.setenv("FPAB_ENGINE", "/y/fpab")
+    assert find_engine(None) == ["/y/fpab"]
+
+
+def test_find_engine_prefers_project_venv(monkeypatch, tmp_path):
+    monkeypatch.delenv("FPAB_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path / "app")
+    monkeypatch.setattr(engine, "repo_root", lambda: tmp_path)
+    venv = tmp_path / ".venv" / "bin" / "fpab"
+    venv.parent.mkdir(parents=True)
+    venv.write_bytes(b"")
+    venv.chmod(0o755)
+    assert find_engine(None) == [str(venv)]
+
+
+def test_the_uv_fallback_never_reaches_the_network(monkeypatch, tmp_path):
+    monkeypatch.delenv("FPAB_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path / "app")
+    monkeypatch.setattr(engine, "repo_root", lambda: tmp_path)
+    (tmp_path / "pyproject.toml").write_text("")
+    monkeypatch.setattr(engine.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    argv = find_engine(None)
+    assert argv[:4] == ["uv", "run", "--locked", "--offline"] and argv[-1] == "fpab"
+
+
+def test_find_engine_beside_frozen_app(monkeypatch, tmp_path):
+    exe = tmp_path / "fpab.exe"
+    exe.write_bytes(b"")
+    monkeypatch.delenv("FPAB_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path)
+    assert find_engine(None) == [str(exe)]
+
+
+def test_bundled_model_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path)
+    assert engine.bundled_model_dir() is None
+    (tmp_path / "models").mkdir()
+    assert engine.bundled_model_dir() == tmp_path / "models"
