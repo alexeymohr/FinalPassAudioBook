@@ -81,7 +81,8 @@ uv run pytest gui/tests    # core + window-build tests (the GTK one skips withou
 
 - macOS: `macos/build_app.sh` (Xcode + a uv-managed Python 3.12); see `macos/README.md`.
 - Windows: `windows/build.ps1` (uv + Inno Setup 6) builds the exes and the installer;
-  `.github/workflows/windows-installer.yml` runs the same in CI, on demand.
+  `.github/workflows/windows-installer.yml` runs the same in CI and attaches the installer to
+  each published release.
 
 Both bundle the model weights so the installed app runs offline.
 

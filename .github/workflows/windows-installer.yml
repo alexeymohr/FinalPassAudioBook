@@ -1,11 +1,19 @@
-# Build the one-click Windows installer and upload it as an artifact, on demand only (it is
-# not part of a release). Signing is not configured, so the artifact is unsigned
-# (SmartScreen will warn). Actions are pinned to commit hashes, as in tests.yml; Inno Setup
-# to a version.
+# Build the one-click Windows installer (experimental, unsigned) and attach it, with its SHA-256,
+# to a release when one is published. Run it by hand with a release tag to attach to that
+# release, or with no tag to build the current branch as a downloadable artifact only.
+# Signing is not configured, so Windows SmartScreen warns about an unknown publisher. Actions are
+# pinned to commit hashes, as in tests.yml; Inno Setup to a version.
 name: windows-installer
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the installer to (blank: build this branch, artifact only)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -14,9 +22,14 @@ jobs:
   build:
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: write                   # attaching the installer to the release
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
         with:
@@ -27,9 +40,26 @@ jobs:
       - name: Build the installer
         shell: pwsh
         run: ./windows/build.ps1
-      - name: Upload the installer
+      - name: Write its SHA-256
+        shell: pwsh
+        run: |
+          $exe = Get-Item windows/dist/*-setup.exe
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+          Set-Content -NoNewline -Path "$($exe.FullName).sha256" -Value "$hash  $($exe.Name)`n"
+          Write-Host "$hash  $($exe.Name)"
+      - name: Upload the installer as an artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: windows-installer
-          path: windows/dist/*-setup.exe
+          path: |
+            windows/dist/*-setup.exe
+            windows/dist/*-setup.exe.sha256
           if-no-files-found: error
+      - name: Attach it to the release
+        if: env.TAG != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = Get-ChildItem windows/dist/*-setup.exe, windows/dist/*-setup.exe.sha256 | ForEach-Object FullName
+          gh release upload "$env:TAG" @files --clobber --repo "$env:GITHUB_REPOSITORY"

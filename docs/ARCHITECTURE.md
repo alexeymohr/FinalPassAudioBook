@@ -148,7 +148,7 @@ into a sandboxed `.app`.
 - `macos/build_app.sh` builds the macOS `.app`; `macos/release.sh` notarizes and wraps it.
 - `windows/build.ps1` builds the Windows exes (PyInstaller spec `windows/fpab-windows.spec`)
   and the installer (`windows/installer.iss`, Inno Setup); `.github/workflows/windows-installer.yml`
-  runs it on `windows-latest` on demand and uploads the setup exe (not part of a release).
+  runs it on `windows-latest` when a release is published and attaches the setup exe to it.
 
 ## Design constraints
 

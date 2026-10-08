@@ -22,6 +22,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExe}
+InfoBeforeFile=EXPERIMENTAL.txt
 ; SetupIconFile=app.ico
 
 [Languages]

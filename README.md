@@ -75,12 +75,16 @@ Drop WAV files (or folders) in, press Go, and get the same per-file CSVs.
 
 - **macOS:** a sandboxed, no-network drag-and-drop app from [macos/](macos/README.md);
   releases carry the signed, notarized DMG.
-- **Linux:** a GTK 4 app; **Windows:** a Tkinter app — both from [gui/](gui/README.md)
-  (`gui/fpab-gui`, or `gui\fpab-gui.cmd` on Windows). Experimental: no OS sandbox (the
-  engine's network guard still applies), and not yet part of a release.
-- **Windows installer:** a one-click, per-user setup that bundles the GUI, the engine and
-  both models, built from [windows/](windows/README.md) — unsigned, and built on demand,
-  not with releases.
+- **Windows (experimental, unsupported):** each release also carries
+  `FinalPassAudioBook-<version>-setup.exe`, a one-click installer for your user only (no
+  administrator rights) with the app, the engine and both models inside. It is **not
+  code-signed**, so Windows shows "Windows protected your PC" when you open it: click
+  **More info**, then **Run anyway** — but only for a file you downloaded from this
+  project's Releases page. Its results have matched the Mac version's on test chapters, but
+  it is tested far less, has no OS sandbox (the engine's network guard still applies) and
+  comes with no support or warranty. Built from [windows/](windows/README.md).
+- **Linux (experimental, unsupported):** a GTK 4 app that runs from this repository, not
+  packaged: see [gui/](gui/README.md).
 
 The Linux and Windows apps were contributed by Paul Philippov
 ([@themactep](https://github.com/themactep)).

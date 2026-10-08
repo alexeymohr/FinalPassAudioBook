@@ -1,0 +1,20 @@
+FinalPass AudioBook for Windows: EXPERIMENTAL
+
+Please read before installing.
+
+This Windows version is experimental and unsupported.
+- It is tested, but much less than the Mac version. Its results have matched the Mac
+  version's on test chapters, but it may have problems the Mac version does not.
+- It is not code-signed. That is why Windows warned you about an "unknown publisher"
+  before this screen. Only install it if you downloaded it from the project's own
+  GitHub page: https://github.com/alexeymohr/FinalPassAudioBook/releases
+- It comes with no support and no warranty (MIT licence). Problems can be reported on
+  the project's GitHub page, but there is no promise of a fix.
+
+What it does: it checks your WAV chapters on this computer and writes a CSV report
+beside each one. Your audio stays on your computer; nothing is uploaded.
+
+It installs for your user only (no administrator rights needed) and can be removed
+any time from Settings > Apps > Installed apps.
+
+It is a triage tool, not a pass/fail gate: always trust your own ears.
