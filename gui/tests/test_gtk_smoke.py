@@ -14,7 +14,7 @@ def test_window_builds():
         pytest.skip("no display")
     if not Gtk.init_check():
         pytest.skip("no working display")
-    app = Gtk.Application(application_id="com.themactep.FinalPassAudioBook.test")
+    app = Gtk.Application(application_id="io.github.alexeymohr.FinalPassAudioBook.test")
     app.register(None)
     window = MainWindow(app, ["/bin/true"])
     assert window.get_title() == "FinalPass AudioBook"

@@ -31,6 +31,12 @@ truncation = [
     "transformers==5.14.1",
     "safetensors==0.8.0",
 ]
+# Building the Windows desktop app (windows/build.ps1): PyInstaller freezes the GUI and the
+# engine. Locked like everything else (the exclude-newer cut-off applies); never needed to run.
+windows-build = [
+    "pyinstaller==6.22.3",
+    "pyinstaller-hooks-contrib==2026.7",
+]
 
 [project.scripts]
 fpab = "finalpass_audiobook.cli:main"
@@ -50,5 +56,5 @@ finalpass = { git = "https://github.com/alexeymohr/FinalPass", rev = "0e12d17bf5
 packages = ["src/finalpass_audiobook"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "gui/tests"]
 markers = ["real_models: uses the model weights installed on this machine (skipped where there are none)"]

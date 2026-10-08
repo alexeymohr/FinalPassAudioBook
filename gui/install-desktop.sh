@@ -9,7 +9,7 @@ cat > "$apps/fpab-gui.desktop" <<EOF
 Type=Application
 Name=FinalPass AudioBook
 Comment=Local, offline QC for AI-narrated audiobook chapters
-Exec=$here/fpab-gui
+Exec="$here/fpab-gui"
 Terminal=false
 Categories=AudioVideo;Audio;
 Keywords=audiobook;QC;audio;

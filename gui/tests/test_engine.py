@@ -30,7 +30,7 @@ def test_parse_ignores_unknown_fields_and_junk():
 def test_build_command():
     from pathlib import Path
     argv = build_command([Path("a.wav"), Path("b.wav")], Path("/out"), True, ["/eng/fpab"])
-    assert argv == ["/eng/fpab", "check", "--csv-dir", "/out", "--progress", "jsonl",
+    assert argv == ["/eng/fpab", "check", "--csv-dir", str(Path("/out")), "--progress", "jsonl",
                     "--with-pauses", "--", "a.wav", "b.wav"]
 
 
@@ -40,11 +40,25 @@ def test_find_engine_explicit_and_env(monkeypatch, tmp_path):
     assert find_engine(None) == ["/y/fpab"]
 
 
-def test_find_engine_prefers_project_venv(monkeypatch):
+def test_find_engine_prefers_project_venv(monkeypatch, tmp_path):
     monkeypatch.delenv("FPAB_ENGINE", raising=False)
-    (repo_root() / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
-    found = find_engine(None)
-    assert found[-1].endswith("fpab")
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path / "app")
+    monkeypatch.setattr(engine, "repo_root", lambda: tmp_path)
+    venv = tmp_path / ".venv" / "bin" / "fpab"
+    venv.parent.mkdir(parents=True)
+    venv.write_bytes(b"")
+    venv.chmod(0o755)
+    assert find_engine(None) == [str(venv)]
+
+
+def test_the_uv_fallback_never_reaches_the_network(monkeypatch, tmp_path):
+    monkeypatch.delenv("FPAB_ENGINE", raising=False)
+    monkeypatch.setattr(engine, "app_dir", lambda: tmp_path / "app")
+    monkeypatch.setattr(engine, "repo_root", lambda: tmp_path)
+    (tmp_path / "pyproject.toml").write_text("")
+    monkeypatch.setattr(engine.shutil, "which", lambda name: "/usr/bin/uv" if name == "uv" else None)
+    argv = find_engine(None)
+    assert argv[:4] == ["uv", "run", "--locked", "--offline"] and argv[-1] == "fpab"
 
 
 def test_find_engine_beside_frozen_app(monkeypatch, tmp_path):

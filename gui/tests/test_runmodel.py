@@ -1,5 +1,6 @@
 import os
 import stat
+import sys
 import time
 
 import pytest
@@ -46,6 +47,11 @@ def _write_script(tmp_path, name, body):
     return path
 
 
+def _argv(script):
+    """Run a fake engine script with this Python (a .py file is not executable on Windows)."""
+    return [sys.executable, str(script)]
+
+
 @pytest.fixture
 def engine(tmp_path):
     return _write_script(tmp_path, "fake-fpab", FAKE_ENGINE)
@@ -67,7 +73,7 @@ def _settings(tmp_path, **kwargs):
 def test_run_places_csv_beside(engine, tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"")
-    model = RunModel([str(engine)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model = RunModel(_argv(engine), settings=_settings(tmp_path), confirm=lambda c, a: True)
     model.add([wav])
     model.go()
     _wait(model)
@@ -82,7 +88,7 @@ def test_numbered_when_name_taken(engine, tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"")
     (tmp_path / "a.csv").write_text("old\n")
-    model = RunModel([str(engine)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model = RunModel(_argv(engine), settings=_settings(tmp_path), confirm=lambda c, a: True)
     model.add([wav])
     model.go()
     _wait(model)
@@ -95,7 +101,7 @@ def test_folder_output(engine, tmp_path):
     wav.write_bytes(b"")
     dest = tmp_path / "out"
     dest.mkdir()
-    model = RunModel([str(engine)],
+    model = RunModel(_argv(engine),
                      settings=_settings(tmp_path, output="folder", folder=str(dest)),
                      confirm=lambda c, a: True)
     model.add([wav])
@@ -114,7 +120,7 @@ def test_engine_error_surfaces(engine, tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"")
     failing = _write_script(tmp_path, "fail-fpab", FAIL_ENGINE)
-    model = RunModel([str(failing)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model = RunModel(_argv(failing), settings=_settings(tmp_path), confirm=lambda c, a: True)
     model.add([wav])
     model.go()
     _wait(model)
@@ -125,7 +131,7 @@ def test_engine_error_surfaces(engine, tmp_path):
 def test_dedupes_same_file(engine, tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"")
-    model = RunModel([str(engine)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model = RunModel(_argv(engine), settings=_settings(tmp_path), confirm=lambda c, a: True)
     model.add([wav, wav])
     assert len(model.items) == 1
     assert model.items[0].path == wav
@@ -135,7 +141,7 @@ def test_clear_needs_confirmation_only_when_unsaved(engine, tmp_path):
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"")
     calls = []
-    model = RunModel([str(engine)], settings=_settings(tmp_path),
+    model = RunModel(_argv(engine), settings=_settings(tmp_path),
                      confirm=lambda c, a: calls.append((c, a)) or False)
     model.add([wav])
     model.clear()
@@ -150,8 +156,29 @@ def test_points_engine_at_bundled_models(tmp_path, monkeypatch):
     models.mkdir()
     engine = _write_script(tmp_path, "md-fpab", MODEL_DIR_ENGINE)
     monkeypatch.setattr(runmodel, "bundled_model_dir", lambda: models)
-    model = RunModel([str(engine)], settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model = RunModel(_argv(engine), settings=_settings(tmp_path), confirm=lambda c, a: True)
     model.add([wav])
     model.go()
     _wait(model)
     assert model.run_notes == [str(models)]
+
+
+def test_the_engine_never_opens_a_console_window(engine, tmp_path, monkeypatch):
+    """On Windows the bundled fpab.exe is a console program; started from the GUI it must not open a window."""
+    seen = {}
+    real = runmodel.subprocess.Popen
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(runmodel.subprocess, "Popen", spy)
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"")
+    model = RunModel(_argv(engine), settings=_settings(tmp_path), confirm=lambda c, a: True)
+    model.add([wav])
+    model.go()
+    _wait(model)
+    assert seen["creationflags"] == getattr(runmodel.subprocess, "CREATE_NO_WINDOW", 0)
+    if sys.platform == "win32":
+        assert seen["creationflags"] == 0x08000000

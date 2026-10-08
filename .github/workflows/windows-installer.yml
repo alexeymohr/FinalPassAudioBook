@@ -1,12 +1,11 @@
-# Build the one-click Windows installer and upload it as an artifact. Signing is not
-# configured, so the artifact is unsigned (SmartScreen will warn). Actions are pinned to
-# commit hashes, as in tests.yml.
+# Build the one-click Windows installer and upload it as an artifact, on demand only (it is
+# not part of a release). Signing is not configured, so the artifact is unsigned
+# (SmartScreen will warn). Actions are pinned to commit hashes, as in tests.yml; Inno Setup
+# to a version.
 name: windows-installer
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -24,7 +23,7 @@ jobs:
           version: "0.11.7"
           enable-cache: false
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        run: choco install innosetup --version 6.3.2 --no-progress -y
       - name: Build the installer
         shell: pwsh
         run: ./windows/build.ps1

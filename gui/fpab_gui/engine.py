@@ -103,7 +103,9 @@ def find_engine(explicit: str | None = None) -> list[str]:
         if venv.is_file() and os.access(venv, os.X_OK):
             return [str(venv)]
     if (repo / "pyproject.toml").is_file() and shutil.which("uv"):
-        return ["uv", "run", "--project", str(repo), "fpab"]
+        # --locked --offline: never re-resolve, never download — starting a check must not reach
+        # the network (an environment that is not synced yet fails here with uv's own message)
+        return ["uv", "run", "--locked", "--offline", "--project", str(repo), "fpab"]
     found = shutil.which("fpab")
     if found:
         return [found]

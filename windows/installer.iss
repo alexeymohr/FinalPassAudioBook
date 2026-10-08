@@ -10,7 +10,7 @@
 AppId={{6F3A2B14-7C5D-4E8A-9B21-0D4E6F8A1C33}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=themactep
+AppPublisher=Alexey Mohr
 DefaultDirName={localappdata}\Programs\FinalPass AudioBook
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes

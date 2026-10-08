@@ -17,6 +17,10 @@ from pathlib import Path
 from . import config, placement
 from .engine import AUDIO_EXTENSIONS, EngineEvent, build_command, bundled_model_dir
 
+# The bundled engine is a console program: on Windows, started from the windowed GUI it would open a
+# console window for every check unless told not to (0 elsewhere: no such flag).
+NO_CONSOLE = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 @dataclass
 class Item:
@@ -214,7 +218,7 @@ class RunModel:
         try:
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=stderr, cwd=str(work), text=True, encoding="utf-8",
-                                    env=env)
+                                    env=env, creationflags=NO_CONSOLE)
         except OSError as exc:
             stderr.close()
             self.error_text = f"Could not start the engine: {exc}"
@@ -340,7 +344,6 @@ class RunModel:
             self._workdir = None
 
     def _finished(self, code: int) -> None:
-        self.running = False
         self._proc = None
         for item in self.items:
             if item.state in ("running", "waiting"):
@@ -369,6 +372,7 @@ class RunModel:
         if self._workdir:
             shutil.rmtree(self._workdir, ignore_errors=True)
             self._workdir = None
+        self.running = False                         # last: "finished" means every result above is in place
 
     # MARK: unsaved reports
 

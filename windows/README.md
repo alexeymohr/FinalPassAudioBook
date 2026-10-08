@@ -18,21 +18,24 @@ The GUI finds `fpab.exe` beside itself and points it at `{app}\models` via
 
 ## Build (on Windows)
 
-Needs [uv](https://docs.astral.sh/uv/) and
-[Inno Setup 6](https://jrsoftware.org/isinfo.php).
+Needs [uv](https://docs.astral.sh/uv/), git (uv fetches the pinned FinalPass library with
+it) and [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or later (a per-user install is
+found too).
 
 ```
 powershell -ExecutionPolicy Bypass -File windows\build.ps1
 ```
 
-It syncs the locked environment, downloads and verifies the models, installs PyInstaller,
-builds the two exes into `windows\dist\FinalPassAudioBook\`, stages `windows\staging\models\`,
-and runs Inno Setup. Output: `windows\dist\FinalPassAudioBook-<version>-setup.exe`.
+It syncs the locked environment with the `windows-build` extra (PyInstaller, pinned and held
+to the 7-day rule like every other dependency), downloads and verifies the models, builds the
+two exes into `windows\dist\FinalPassAudioBook\`, stages the two verified weight files in
+`windows\staging\models\`, and runs Inno Setup (6.3 or later). Output: `windows\dist\FinalPassAudioBook-<version>-setup.exe`.
 
 ## Or build in CI
 
 `.github/workflows/windows-installer.yml` runs the same build on `windows-latest`
-(triggered by a tag like `v0.2.4`, or manually) and uploads the setup exe as an artifact.
+(started by hand from the Actions tab) and uploads the setup exe as an artifact; it is not
+part of a release.
 
 ## Notes
 
@@ -41,6 +44,5 @@ and runs Inno Setup. Output: `windows\dist\FinalPassAudioBook-<version>-setup.ex
   `SignTool` to `installer.iss` and sign the exes in `build.ps1` if you have one.
 - The exes are **onedir** (a folder with the two exes and their DLLs), not single-file,
   so startup is fast; the installer packages that folder.
-- Explorer drag-and-drop needs the optional `tkinterdnd2` package. To include it, add it
-  to the build environment (`uv pip install tkinterdnd2`) before PyInstaller runs; the
-  spec collects it automatically when present.
+- Explorer drag-and-drop needs the optional `tkinterdnd2` package, which is not part of the
+  locked build; "Add Files…" always works without it.

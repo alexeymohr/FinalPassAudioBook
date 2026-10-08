@@ -424,7 +424,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
 class FPABApplication(Gtk.Application):
     def __init__(self, engine_argv: list[str]) -> None:
-        super().__init__(application_id="com.themactep.FinalPassAudioBook",
+        super().__init__(application_id="io.github.alexeymohr.FinalPassAudioBook",
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.engine_argv = engine_argv
         self.window: MainWindow | None = None

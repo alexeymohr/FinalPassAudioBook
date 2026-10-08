@@ -6,7 +6,8 @@ model weights, wrapped into FinalPassAudioBook-<version>-setup.exe (Inno Setup).
 Run from a Windows checkout with uv installed:
     powershell -ExecutionPolicy Bypass -File windows\build.ps1
 
-Needs Inno Setup 6 (https://jrsoftware.org/isinfo.php). Everything else is fetched by uv.
+Needs git (uv fetches the pinned FinalPass with it) and Inno Setup 6.3 or later
+(https://jrsoftware.org/isinfo.php). Everything else is fetched by uv.
 #>
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -17,25 +18,33 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     throw "uv is required: https://docs.astral.sh/uv/getting-started/installation/"
 }
 
-Write-Host "==> Syncing the project environment"
-uv sync --locked
+Write-Host "==> Syncing the project environment (with the locked PyInstaller)"
+uv sync --locked --extra windows-build
 
 Write-Host "==> Fetching and verifying the model weights"
 uv run --locked fpab setup-model
 
-Write-Host "==> Installing PyInstaller"
-uv pip install --quiet pyinstaller pyinstaller-hooks-contrib
-
 $version = (uv run --locked python -c "import finalpass_audiobook as m; print(m.__version__)").Trim()
 Write-Host "==> Version $version"
 
-Write-Host "==> Staging the model weights beside the app"
-$cache = Join-Path $env:USERPROFILE ".cache\finalpass-audiobook"
-if (-not (Test-Path $cache)) { throw "model cache not found at $cache" }
+Write-Host "==> Staging the model weights beside the app (the two verified files, nothing else)"
 $staging = Join-Path $here "staging"
 Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path (Join-Path $staging "models") | Out-Null
-Copy-Item -Recurse -Force (Join-Path $cache "*") (Join-Path $staging "models")
+$env:FPAB_STAGE = Join-Path $staging "models"
+uv run --locked python -c @"
+import os, shutil
+from pathlib import Path
+from finalpass_audiobook import breath_model, model
+dest = Path(os.environ['FPAB_STAGE'])
+for m in (model, breath_model):
+    m.load()                                        # verifies size and SHA-256 before anything is copied
+    src = m.weights_path()
+    rel = src.relative_to(m.model_dir().parent.parent)   # keep the <model>/<revision>/<file> layout
+    (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dest / rel)
+    print('staged', rel)
+"@
+if ($LASTEXITCODE -ne 0) { throw "staging the model weights failed" }
 
 Write-Host "==> Building the executables (PyInstaller)"
 Remove-Item -Recurse -Force (Join-Path $here "dist"), (Join-Path $here "build") -ErrorAction SilentlyContinue
@@ -46,7 +55,8 @@ Write-Host "==> Building the installer (Inno Setup)"
 $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
 if (-not $iscc) {
     foreach ($p in @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-                     "$env:ProgramFiles\Inno Setup 6\ISCC.exe")) {
+                     "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+                     "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")) {   # a per-user install
         if (Test-Path $p) { $iscc = $p; break }
     }
 }
