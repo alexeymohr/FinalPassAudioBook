@@ -33,12 +33,15 @@ two exes into `windows\dist\FinalPassAudioBook\`, stages the two verified weight
 
 ## Or build in CI
 
-`.github/workflows/windows-installer.yml` runs the same build on `windows-latest`
-(started by hand from the Actions tab) and uploads the setup exe as an artifact; it is not
-part of a release.
+`.github/workflows/windows-installer.yml` runs the same build on `windows-latest` (real x64)
+whenever a release is published and attaches the setup exe and its `.sha256` to that release.
+Run it by hand from the Actions tab with a release tag to (re)attach to that release, or with
+no tag to build the current branch as a downloadable artifact only.
 
 ## Notes
 
+- **Experimental and unsupported.** The setup opens with `EXPERIMENTAL.txt`, which says so
+  in plain words before anything is installed.
 - **Unsigned.** The setup and the app are not code-signed, so SmartScreen shows a
   "unknown publisher" prompt. Signing needs a Windows code-signing certificate; add
   `SignTool` to `installer.iss` and sign the exes in `build.ps1` if you have one.
