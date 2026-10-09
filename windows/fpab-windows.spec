@@ -4,6 +4,7 @@
 The engine's models are NOT frozen in here; the installer drops them beside the exes in
 `models/`, where the GUI finds them and points the engine at them via FPAB_MODEL_DIR.
 """
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_dynamic_libs
@@ -40,6 +41,12 @@ def make_analysis(script):
 
 gui = make_analysis(GUI)
 engine = make_analysis(ENGINE)
+
+sys.path.insert(0, str(ROOT / "windows"))
+import finalpass_audiobook
+import licenses                                   # windows/licenses.py: the installer's {app}\Licenses
+
+licenses.gather([gui, engine], ROOT, ROOT / "windows" / "staging" / "Licenses", finalpass_audiobook.__version__)
 
 exe_gui = EXE(PYZ(gui.pure), gui.scripts, [], [], name="fpab-gui", console=False,
               exclude_binaries=True, upx=False, strip=False)
