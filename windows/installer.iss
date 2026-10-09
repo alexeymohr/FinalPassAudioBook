@@ -34,6 +34,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 Source: "dist\FinalPassAudioBook\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "staging\models\*"; DestDir: "{app}\models"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "staging\Licenses\*"; DestDir: "{app}\Licenses"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

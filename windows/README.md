@@ -12,6 +12,7 @@ then launch from the Start Menu.
 | `fpab-gui.exe` | PyInstaller, Tkinter frontend | `{app}\fpab-gui.exe` |
 | `fpab.exe` | PyInstaller, the engine CLI | `{app}\fpab.exe` |
 | model weights | `fpab setup-model` output | `{app}\models\` |
+| licences | `licenses.py`, from the spec: the licence texts of every bundled component | `{app}\Licenses\` |
 
 The GUI finds `fpab.exe` beside itself and points it at `{app}\models` via
 `FPAB_MODEL_DIR`, so the installed app needs no network, no `.venv`, no `~/.cache`.
@@ -28,7 +29,8 @@ powershell -ExecutionPolicy Bypass -File windows\build.ps1
 
 It syncs the locked environment with the `windows-build` extra (PyInstaller, pinned and held
 to the 7-day rule like every other dependency), downloads and verifies the models, builds the
-two exes into `windows\dist\FinalPassAudioBook\`, stages the two verified weight files in
+two exes into `windows\dist\FinalPassAudioBook\`, gathers the licence texts of everything they
+bundle into `windows\staging\Licenses\`, stages the two verified weight files in
 `windows\staging\models\`, and runs Inno Setup (6.3 or later). Output: `windows\dist\FinalPassAudioBook-<version>-setup.exe`.
 
 ## Or build in CI
